@@ -54,82 +54,183 @@ function getDeviceIcon(vendor, alias) {
     return '<i class="fas fa-network-wired text-gray-400"></i>';
 }
 
+let currentTab = 'all';
+let currentPage = 1;
+const ITEMS_PER_PAGE = 5;
+let allDevices = [];
+
+function setTab(tab) {
+    currentTab = tab;
+    currentPage = 1;
+    updateTabsUI();
+    renderDevices(allDevices);
+}
+
+function updateTabsUI() {
+    ['all', 'intruder', 'trusted', 'blocked', 'offline'].forEach(t => {
+        const btn = document.getElementById(`tab-${t}`);
+        if (!btn) return;
+        if (t === currentTab) {
+            btn.className = "px-4 py-2 rounded-lg text-sm font-bold transition-all text-white bg-blue-600 shadow-lg transform scale-105";
+        } else {
+            btn.className = "px-4 py-2 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-white/5";
+        }
+    });
+}
+
+function changePage(delta) {
+    currentPage += delta;
+    renderDevices(allDevices);
+}
+
 function renderDevices(devices) {
-    const list = document.getElementById('device-list');
-    list.innerHTML = '';
+    allDevices = devices; // Store for re-rendering
 
-    if (devices.length === 0) {
-        list.innerHTML = `
-            <div class="p-12 text-center text-gray-400">
-                <i class="fas fa-search text-4xl mb-4 opacity-50"></i>
-                <p>No se encontraron dispositivos.</p>
-            </div>`;
-        return;
-    }
+    // 1. Filter
+    let filtered = devices.filter(d => {
+        const isOnline = d.status === 'online';
+        const isTrusted = d.is_trusted;
+        const isJailed = jailedDevices.includes(d.ip);
+        const isLegacyBlocked = blockedDevices.includes(d.mac);
+        const isBlocked = isJailed || isLegacyBlocked;
 
-    // Sort: Intruder > Online > Offline
-    devices.sort((a, b) => {
+        if (currentTab === 'intruder') return isOnline && !isTrusted && !isBlocked;
+        if (currentTab === 'trusted') return isTrusted && isOnline;
+        if (currentTab === 'offline') return !isOnline;
+        if (currentTab === 'blocked') return isBlocked;
+        return true; // all
+    });
+
+    // Update Badges
+    const countBlocked = devices.filter(d => jailedDevices.includes(d.ip) || blockedDevices.includes(d.mac)).length;
+
+    document.getElementById('badge-all').innerText = devices.length;
+    // Intruders exclude blocked ones now, to keep the list clean
+    document.getElementById('badge-intruder').innerText = devices.filter(d => !d.is_trusted && d.status === 'online' && !jailedDevices.includes(d.ip) && !blockedDevices.includes(d.mac)).length;
+    document.getElementById('badge-trusted').innerText = devices.filter(d => d.is_trusted && d.status === 'online').length;
+    document.getElementById('badge-offline').innerText = devices.filter(d => d.status === 'offline').length;
+
+    // Tab counters (UI update if elements exist)
+    if (document.getElementById('count-all')) document.getElementById('count-all').innerText = devices.length;
+    if (document.getElementById('count-intruders')) document.getElementById('count-intruders').innerText = document.getElementById('badge-intruder').innerText;
+    if (document.getElementById('count-trusted')) document.getElementById('count-trusted').innerText = document.getElementById('badge-trusted').innerText;
+    if (document.getElementById('count-blocked')) document.getElementById('count-blocked').innerText = countBlocked;
+    if (document.getElementById('count-offline')) document.getElementById('count-offline').innerText = document.getElementById('badge-offline').innerText;
+
+    // 2. Sort (Blocked > Intruder > Online > Offline)
+    filtered.sort((a, b) => {
+        const isBlockedA = jailedDevices.includes(a.ip) || blockedDevices.includes(a.mac);
+        const isBlockedB = jailedDevices.includes(b.ip) || blockedDevices.includes(b.mac);
+        if (isBlockedA !== isBlockedB) return isBlockedA ? -1 : 1;
+
         const scoreA = (a.status === 'online' ? 10 : 0) + (!a.is_trusted ? 5 : 0);
         const scoreB = (b.status === 'online' ? 10 : 0) + (!b.is_trusted ? 5 : 0);
         return scoreB - scoreA;
     });
 
-    devices.forEach(device => {
+    // 3. Paginate
+    const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE) || 1;
+    if (currentPage < 1) currentPage = 1;
+    if (currentPage > totalPages) currentPage = totalPages;
+
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    const end = start + ITEMS_PER_PAGE;
+    const paginated = filtered.slice(start, end);
+
+    // Update Pagination UI
+    document.getElementById('pagination-info').innerText = `Mostrando ${filtered.length > 0 ? start + 1 : 0}-${Math.min(end, filtered.length)} de ${filtered.length}`;
+    document.getElementById('btn-prev').disabled = currentPage === 1;
+    document.getElementById('btn-next').disabled = currentPage === totalPages;
+
+    // Render Grid
+    const list = document.getElementById('device-list');
+    list.innerHTML = '';
+
+    if (paginated.length === 0) {
+        list.innerHTML = `
+            <div class="p-12 text-center text-gray-400">
+                <i class="fas fa-filter text-4xl mb-4 opacity-50"></i>
+                <p>No hay dispositivos en esta categoría.</p>
+            </div>`;
+        return;
+    }
+
+    paginated.forEach(device => {
         const isOnline = device.status === 'online';
         const isTrusted = device.is_trusted;
+        const isJailed = jailedDevices.includes(device.ip);
+        const isLegacyBlocked = blockedDevices.includes(device.mac);
+        const isBlocked = isJailed || isLegacyBlocked;
+
         const icon = getDeviceIcon(device.vendor || "", device.alias || "");
 
-        let statusClass = isOnline
-            ? (isTrusted ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30')
-            : 'bg-white/5 border-white/10 opacity-60';
+        let statusClass = "";
+        if (isBlocked) {
+            statusClass = 'bg-gray-900/50 border-red-900/50 opacity-75 grayscale sepia';
+        } else if (isOnline) {
+            statusClass = isTrusted ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30';
+        } else {
+            statusClass = 'bg-white/5 border-white/10 opacity-60 grayscale';
+        }
 
         const item = document.createElement('div');
-        item.className = `p-4 rounded-xl border backdrop-blur-sm transition-all hover:scale-[1.01] ${statusClass} flex flex-col md:flex-row justify-between items-center mb-3`;
+        item.className = `p-4 rounded-xl border backdrop-blur-sm transition-all hover:scale-[1.01] ${statusClass} flex flex-col md:flex-row justify-between items-center mb-3 relative overflow-hidden`;
+
+        // Blocked Overlay
+        const lockedOverlay = isBlocked ? `<div class="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/10"><i class="fas fa-lock text-6xl text-red-500/20 rotate-12"></i></div>` : '';
 
         item.innerHTML = `
-            <div class="flex items-center w-full md:w-auto mb-3 md:mb-0">
-                <div class="w-12 h-12 rounded-full flex items-center justify-center bg-black/20 text-2xl mr-4 shadow-inner">
+            ${lockedOverlay}
+            <div class="flex items-center w-full md:w-auto mb-3 md:mb-0 relative z-10">
+                <div class="w-12 h-12 rounded-full flex items-center justify-center bg-black/20 text-2xl mr-4 shadow-inner relative">
                     ${icon}
+                    ${isOnline && !isBlocked ? '<div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-slate-900"></div>' : ''}
+                    ${isBlocked ? '<div class="absolute bottom-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-slate-900"></div>' : ''}
                 </div>
                 <div>
                     <div class="flex items-center gap-2">
                         <h3 class="font-bold text-lg text-white">${device.alias || device.vendor || 'Dispositivo Desconocido'}</h3>
-                        ${!isTrusted && isOnline ?
+                        ${isBlocked ?
+                '<span class="px-2 py-0.5 rounded-full text-xs bg-red-900/50 text-red-400 border border-red-700/50 font-bold">⛔ BLOQUEADO</span>'
+                : ''}
+                        ${!isTrusted && isOnline && !isBlocked ?
                 '<span class="px-2 py-0.5 rounded-full text-xs bg-red-500/20 text-red-300 border border-red-500/30 font-bold shadow-lg shadow-red-500/20">⚠ INTRUSO</span>'
                 : ''}
-                        ${isTrusted ?
-                '<span class="px-2 py-0.5 rounded-full text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium"><i class="fas fa-check-circle"></i> Seguro</span>'
+                        ${!isOnline ?
+                '<span class="px-2 py-0.5 rounded-full text-xs bg-gray-700 text-gray-400 font-mono">OFFLINE</span>'
                 : ''}
                     </div>
                     <div class="text-xs text-gray-400 mt-1 font-mono flex gap-4">
                         <span><i class="fas fa-ethernet"></i> ${device.ip}</span>
                         <span><i class="fas fa-fingerprint"></i> ${device.mac}</span>
                     </div>
-                    ${device.vendor ? `<p class="text-xs text-gray-500 mt-0.5">${device.vendor}</p>` : ''}
                 </div>
             </div>
             
-            <div class="flex gap-2">
-                <button onclick="editAlias('${device.mac}', '${device.alias || ''}')" class="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white transition-all border border-blue-500/30" title="Editar Nombre">
-                    <i class="fas fa-pen"></i>
-                </button>
-                <button onclick="triggerDeepScan('${device.ip}')" class="p-2 rounded-lg bg-green-600/20 hover:bg-green-600 text-green-400 hover:text-white transition-all border border-green-500/30" title="Escaneo Profundo (Nmap)">
-                    <i class="fas fa-microscope"></i>
-                </button>
-                <button onclick="triggerAudit('${device.ip}')" class="p-2 rounded-lg bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white transition-all border border-red-500/30" title="Auditoría de Vulnerabilidades (CVE)">
-                    <i class="fas fa-bug"></i>
-                </button>
-                ${!isTrusted ? `
+            <div class="flex gap-2 relative z-10">
+                 ${!isTrusted ? `
                     <button onclick="setTrust('${device.mac}', true)" class="px-4 py-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white transition-all border border-emerald-500/30 font-medium text-sm flex items-center gap-2" title="Hacer de Confianza">
-                        <i class="fas fa-shield-alt"></i> Confiar
+                        <i class="fas fa-shield-alt"></i>
                     </button>
                 ` : `
-                    <button onclick="setTrust('${device.mac}', false)" class="p-2 rounded-lg bg-orange-600/20 hover:bg-orange-600 text-orange-400 hover:text-white transition-all border border-orange-500/30" title="Quitar Confianza">
+                    <button onclick="setTrust('${device.mac}', false)" class="p-2 rounded-lg bg-orange-600/20 hover:bg-orange-600 text-orange-400 hover:text-white transition-all border border-orange-500/30" title="Quitar de Confianza">
                         <i class="fas fa-ban"></i>
                     </button>
                 `}
-                <button onclick="blockDevice('${device.mac}')" class="p-2 rounded-lg bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white transition-all border border-red-500/30" title="Bloquear">
-                    <i class="fas fa-lock"></i>
+
+                <!-- UNIFIED ACTION BUTTON -->
+                ${isBlocked ? `
+                    <button onclick="unwarnDevice('${device.ip}'); unblockDevice('${device.mac}')" class="p-2 rounded-lg bg-gray-600/20 hover:bg-gray-500 text-gray-400 hover:text-white transition-all border border-gray-500/30" title="Desbloquear y Liberar">
+                        <i class="fas fa-unlock"></i>
+                    </button>
+                ` : `
+                    <button onclick="warnDevice('${device.ip}')" class="p-2 rounded-lg bg-red-600 hover:bg-red-700 text-white transition-all border border-red-500/50 shadow-lg shadow-red-500/30" title="BLOQUEAR Y ALERTAR (Wall of Shame)">
+                        <i class="fas fa-lock"></i>
+                    </button>
+                `}
+                
+                <button onclick="editAlias('${device.mac}', '${device.alias || ''}')" class="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white transition-all border border-blue-500/30">
+                    <i class="fas fa-pen"></i>
                 </button>
             </div>
         `;
@@ -191,7 +292,7 @@ async function editAlias(mac, currentAlias) {
             autocapitalize: 'off'
         },
         customClass: {
-            input: 'text-gray-800'
+            input: 'bg-gray-700 text-white border-gray-600 focus:ring-blue-500 focus:border-blue-500'
         }
     });
 
@@ -420,3 +521,127 @@ setInterval(checkSecurityStatus, 10000);
 
 fetchDevices();
 checkSecurityStatus();
+
+async function blockDevice(mac) {
+    if (!mac) return;
+
+    const result = await Swal.fire({
+        title: '¿Bloquear Dispositivo?',
+        text: "Se enviarán paquetes de desautenticación para desconectarlo de la red. Esto puede ser agresivo.",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#ef4444',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Sí, Bloquear',
+        cancelButtonText: 'Cancelar',
+        background: '#1e293b',
+        color: '#fff'
+    });
+
+    if (result.isConfirmed) {
+        try {
+            const response = await fetch(`${API_URL}/devices/${mac}/block`, { method: 'POST' });
+            if (response.ok) {
+                Toast.fire({ icon: 'success', title: 'Dispositivo Bloqueado' });
+                // Actualizar estado local si es necesario, o esperar al polling
+                fetchDevices();
+            }
+        } catch (e) {
+            Toast.fire({ icon: 'error', title: 'Error al bloquear' });
+        }
+    }
+}
+
+async function unblockDevice(mac) {
+    if (!mac) return;
+
+    try {
+        const response = await fetch(`${API_URL}/devices/${mac}/unblock`, { method: 'POST' });
+        if (response.ok) {
+            Toast.fire({ icon: 'success', title: 'Dispositivo Desbloqueado' });
+            fetchDevices();
+        }
+    } catch (e) {
+        Toast.fire({ icon: 'error', title: 'Error al desbloquear' });
+    }
+}
+
+// Necesitamos saber qué dispositivos están bloqueados para pintar la UI correctamente
+// Modificaremos renderDevices para consultar esta lista o asumiremos que el backend nos lo dice.
+// Por simplicidad, añadiremos un endpoint o modificaremos el GET /devices.
+// Pero como no queremos cambiar todo el backend ahora, haremos un fetch adicional de bloqueados.
+
+let blockedDevices = [];
+
+async function fetchBlockedDevices() {
+    try {
+        const response = await fetch(`${API_URL}/blocked_devices`);
+        const data = await response.json();
+        blockedDevices = data.blocked || [];
+        // Re-render si ya tenemos dispositivos
+        if (allDevices.length > 0) renderDevices(allDevices);
+    } catch (e) {
+        console.error("Error fetching blocked devices", e);
+    }
+}
+
+// Poll blocked list
+setInterval(fetchBlockedDevices, 5000);
+fetchBlockedDevices();
+
+// --- JAIL / WARN LOGIC ---
+let jailedDevices = [];
+
+async function fetchJailedDevices() {
+    try {
+        const response = await fetch(`${API_URL}/jailed_devices`);
+        const data = await response.json();
+        jailedDevices = data.jailed || [];
+        if (allDevices.length > 0) renderDevices(allDevices);
+    } catch (e) {
+        console.error("Error fetching jailed devices", e);
+    }
+}
+
+async function warnDevice(ip) {
+    if (!ip) return;
+
+    const result = await Swal.fire({
+        title: '¿ACTIVAR PROTOCOLO DE EXPULSIÓN?',
+        text: "El dispositivo será aislado y redirigido a una PANTALLA ROJA DE ADVERTENCIA. ¿Estás seguro?",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#ff0000',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'SÍ, ADVERTIR',
+        cancelButtonText: 'Cancelar',
+        background: '#000',
+        color: '#ff0000',
+        iconColor: '#ff0000'
+    });
+
+    if (result.isConfirmed) {
+        try {
+            const response = await fetch(`${API_URL}/devices/${ip}/warn`, { method: 'POST' });
+            if (response.ok) {
+                Toast.fire({ icon: 'success', title: 'Protocolo Iniciado' });
+                fetchJailedDevices();
+            }
+        } catch (e) {
+            Toast.fire({ icon: 'error', title: 'Error al advertir' });
+        }
+    }
+}
+
+async function unwarnDevice(ip) {
+    try {
+        await fetch(`${API_URL}/devices/${ip}/unwarn`, { method: 'POST' });
+        Toast.fire({ icon: 'success', title: 'Protocolo Desactivado' });
+        fetchJailedDevices();
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+setInterval(fetchJailedDevices, 5000);
+fetchJailedDevices();

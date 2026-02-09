@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ALERTA DE SEGURIDAD - INTRUSO DETECTADO</title>
+    <style>
+        body {
+            background-color: #000;
+            color: #ff0000;
+            font-family: 'Courier New', Courier, monospace;
+            text-align: center;
+            padding-top: 50px;
+            overflow: hidden;
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        h1 {
+            font-size: 60px;
+            background: #ff0000;
+            color: #000;
+            padding: 10px 20px;
+            animation: blink 0.5s infinite;
+        }
+
+        .icon {
+            font-size: 150px;
+            margin-bottom: 20px;
+            animation: pulse 1s infinite;
+        }
+
+        p {
+            font-size: 24px;
+            max-width: 800px;
+            margin: 20px auto;
+        }
+
+        .info {
+            color: #fff;
+            margin-top: 40px;
+            border: 1px solid #333;
+            padding: 20px;
+            background: #111;
+        }
+
+        @keyframes blink {
+            0% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.1);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="icon">☠️</div>
+    <h1>ACCESO BLOQUEADO</h1>
+    <p><strong>ALERTA:</strong> Tu dispositivo ha sido identificado como una <strong>AMENAZA</strong> para esta red.</p>
+    <p>Se ha registrado tu dirección MAC y se notificará a las autoridades si persistes en el acceso no autorizado.</p>
+
+    <div class="info">
+        <p>IP Registrada: <span id="ip">DETECTANDO...</span></p>
+        <p>Sistema de Defensa Activo: <span style="color:red">NIVEL MÁXIMO</span></p>
+    </div>
+
+    <!-- Sonido molesto (Sirena) -->
+    <!-- Nota: Los navegadores modernos bloquean el autoplay, pero intentaremos -->
+    <script>
+        document.getElementById('ip').innerText = window.location.hostname || "DESCONOCIDO";
+
+        // Simular sonido
+        const context = new (window.AudioContext || window.webkitAudioContext)();
+        function playSiren() {
+            const osc = context.createOscillator();
+            const gain = context.createGain();
+            osc.connect(gain);
+            gain.connect(context.destination);
+            osc.type = 'sawtooth';
+            osc.frequency.value = 500;
+            gain.gain.value = 0.5;
+
+            osc.start();
+            let up = true;
+            setInterval(() => {
+                const freq = osc.frequency.value;
+                if (up) osc.frequency.value += 10;
+                else osc.frequency.value -= 10;
+
+                if (freq > 1000) up = false;
+                if (freq < 500) up = true;
+            }, 10);
+        }
+
+        document.body.addEventListener('click', () => {
+            playSiren();
+            document.body.requestFullscreen();
+        });
+
+        // Intentar autoplay (puede fallar sin interaccion)
+        setTimeout(playSiren, 1000);
+    </script>
+</body>
+
+</html>

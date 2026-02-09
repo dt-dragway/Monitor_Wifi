@@ -49,6 +49,23 @@ def scan_network(ip_range=None):
         for sent, received in result:
             devices.append({'ip': received.psrc, 'mac': received.hwsrc})
 
+        # AGREGAR EL PROPIO SERVIDOR (LOCALHOST) A LA LISTA
+        # Scapy no se detecta a sí mismo en ARP scan
+        try:
+             local_ip = get_local_ip()
+             # Intentar obtener la MAC de la interfaz correcta
+             # Esto es un best-effort, puede fallar en alquinos entornos docker/vms
+             import uuid
+             mac_num = uuid.getnode()
+             mac_str = ':'.join(['{:02x}'.format((mac_num >> elements) & 0xff) for elements in range(0,2*6,2)][::-1])
+             
+             # Verificar si ya está en la lista (raro, pero por si acaso)
+             if not any(d['ip'] == local_ip for d in devices):
+                 # Es el servidor
+                 devices.append({'ip': local_ip, 'mac': mac_str, 'is_local': True})
+        except:
+             pass
+
         print(f"Escaneo completado. Dispositivos encontrados: {len(devices)}")
         return devices
     except PermissionError:

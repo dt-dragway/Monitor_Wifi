@@ -13,6 +13,8 @@ from backend.models import Device
 from backend.service import update_network_status
 from backend.nmap_scanner import scan_device_details, scan_vulnerabilities
 from backend.mitm_detector import mitm_detector
+from backend.blocker import blocker
+from backend.jail import jailer
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
@@ -34,6 +36,13 @@ async def lifespan(app: FastAPI):
     # Iniciar hilo de escaneo
     t = threading.Thread(target=background_scanner, daemon=True)
     t.start()
+    
+    # Iniciar módulo de bloqueo
+    blocker.start()
+    
+    # Iniciar módulo Jail (Wall of Shame)
+    jailer.start()
+
     yield
     # Clean up if needed (e.g., stop thread)
     global scanning_active
@@ -116,3 +125,31 @@ def get_security_status():
     """
     # Ejecutar chequeo (puede ser ligero, no bloqueante si usa cache de tiempo)
     return mitm_detector.check_security()
+
+@app.post("/api/devices/{mac}/block")
+def block_device(mac: str):
+    blocker.block_device(mac)
+    return {"success": True, "status": "blocked", "mac": mac}
+
+@app.post("/api/devices/{mac}/unblock")
+def unblock_device(mac: str):
+    blocker.unblock_device(mac)
+    return {"success": True, "status": "unblocked", "mac": mac}
+
+@app.get("/api/blocked_devices")
+def get_blocked_devices():
+    return {"blocked": blocker.get_blocked_list()}
+
+@app.post("/api/devices/{ip}/warn")
+def warn_device(ip: str):
+    jailer.add_prisoner(ip)
+    return {"success": True, "status": "jailed", "ip": ip}
+
+@app.post("/api/devices/{ip}/unwarn")
+def unwarn_device(ip: str):
+    jailer.release_prisoner(ip)
+    return {"success": True, "status": "released", "ip": ip}
+
+@app.get("/api/jailed_devices")
+def get_jailed_devices():
+    return {"jailed": list(jailer.victims)}

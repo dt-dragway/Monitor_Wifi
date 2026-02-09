@@ -15,20 +15,31 @@ from mac_vendor_lookup import MacLookup
 # Inicializar MacLookup
 mac_lookup = MacLookup()
 
+import asyncio
+
 def get_vendor(mac):
     try:
-        # Forzamos la carga si es necesaria, pero en versions nuevas MacLookup puede ser async.
-        # Si es la version async, deberíamos usar AsyncMacLookup.
-        # Vamos a intentar usar un "truco" para bajar la base de datos sícronamente o manejarlo mejor.
-        # En la version 0.1.x de mac-vendor-lookup, `lookup` lee de un archivo local.
-        # El error anterior sugiere que se está usando una interfaz async.
-        # Vamos a leer el archivo directamente o manejarlo con una lista estática si falla mucho.
-        # O MEJOR: Usamos requests a una API externa o simplemente atrapamos el error bien.
+        # MacLookup en versiones recientes es Async o retorna coroutine
+        # Usamos asyncio.run para ejecutarlo síncronamente en este contexto
+        # Ojo: crear un event loop nuevo cada vez es costoso, pero funcional para este script simple
+        # Si ya hay loop corriendo, esto fallara. Pero estamos en un thread aparte (background_scanner)
+        # asi que deberia funcionar.
         
-        # Intento simple síncrono
-        return mac_lookup.lookup(mac)
+        try:
+             # Check if we have an event loop
+             loop = asyncio.get_event_loop()
+        except RuntimeError:
+             loop = asyncio.new_event_loop()
+             asyncio.set_event_loop(loop)
+
+        # Para versiones nuevas:
+        return loop.run_until_complete(mac_lookup.lookup(mac))
     except Exception:
-        return "Desconocido"
+        # Fallback a version sincrona o error
+        try:
+             return mac_lookup.lookup(mac) 
+        except:
+             return "Desconocido"
 
 def get_hostname(ip):
     try:
@@ -72,20 +83,29 @@ def update_network_status():
                 if not existing_device.vendor or existing_device.vendor == "Desconocido":
                      existing_device.vendor = get_vendor(mac)
                 
-                # Intentar obtener hostname si no tiene alias
+                 # Intentar obtener hostname si no tiene alias
                 if not existing_device.alias:
-                     hostname = get_hostname(ip)
-                     if hostname:
-                         existing_device.alias = hostname
+                     if d.get('is_local'):
+                         existing_device.alias = "💻 ESTE SERVIDOR (TÚ)"
+                         existing_device.is_trusted = True # Confiar en uno mismo
+                     else:
+                         hostname = get_hostname(ip)
+                         if hostname:
+                             existing_device.alias = hostname
 
                 session.add(existing_device)
             else:
                 # Nuevo dispositivo
                 vendor = get_vendor(mac)
-                hostname = get_hostname(ip)
-                alias = hostname if hostname else None
+                if d.get('is_local'):
+                     alias = "💻 ESTE SERVIDOR (TÚ)"
+                else:
+                     hostname = get_hostname(ip)
+                     alias = hostname if hostname else None
                 
-                new_device = Device(mac=mac, ip=ip, vendor=vendor, alias=alias, status="online", is_trusted=False)
+                is_trusted = True if d.get('is_local') else False
+                
+                new_device = Device(mac=mac, ip=ip, vendor=vendor, alias=alias, status="online", is_trusted=is_trusted)
                 session.add(new_device)
                 print(f"Nuevo dispositivo detectado: {ip} ({mac}) - {vendor} / {alias}")
 
@@ -96,8 +116,16 @@ def update_network_status():
         
         for device in online_devices:
             if device.mac not in active_macs:
-                # Si no respondió en este escaneo, marcar como offline
-                # Podría darse un margen de tolerancia (ej: 2 escaneos perdidos), pero por ahora directo.
+                # Si no respondió, dar margen de tolerancia (Grace Period)
+                # Escaneo es cada 30s. Damos 2 minutos (4 escaneos) antes de marcar offline.
+                # Esto evita parpadeos si un dispositivo no responde un ARP puntual.
+                GRACE_PERIOD = 120 # segundos
+                
+                if device.last_seen:
+                    time_diff = (datetime.utcnow() - device.last_seen).total_seconds()
+                    if time_diff < GRACE_PERIOD:
+                        continue # Aún consideramos online
+                
                 device.status = "offline"
                 session.add(device)
         

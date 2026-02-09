@@ -125,26 +125,74 @@
 
         <!-- Device List -->
         <div class="glass-panel rounded-2xl overflow-hidden">
-            <div class="px-8 py-5 border-b border-gray-700/50 flex justify-between items-center bg-black/20">
+            <div
+                class="px-8 py-5 border-b border-gray-700/50 flex flex-col md:flex-row justify-between items-center bg-black/20 gap-4">
                 <h2 class="text-xl font-semibold text-white flex items-center gap-2">
                     <i class="fas fa-list-ul text-blue-400"></i> Lista de Dispositivos
                 </h2>
-                <span id="last-update" class="text-xs font-mono text-gray-400 bg-gray-800/50 px-3 py-1 rounded-full">
+
+                <!-- Tabs -->
+                <div class="flex bg-gray-900/50 p-1 rounded-xl">
+                    <button onclick="setTab('all')" id="tab-all"
+                        class="px-4 py-2 rounded-lg text-sm font-medium transition-all text-white bg-blue-600 shadow-lg">
+                        Todos <span id="badge-all" class="ml-1 px-1.5 py-0.5 rounded-full bg-black/20 text-xs">0</span>
+                    </button>
+                    <button onclick="setTab('intruder')" id="tab-intruder"
+                        class="px-4 py-2 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white">
+                        Intrusos <span id="badge-intruder"
+                            class="ml-1 px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400 text-xs border border-red-500/30">0</span>
+                    </button>
+                    <button onclick="setTab('trusted')" id="tab-trusted"
+                        class="px-4 py-2 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white">
+                        Confiables <span id="badge-trusted"
+                            class="ml-1 px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-xs border border-emerald-500/30">0</span>
+                    </button>
+                    <button onclick="setTab('blocked')" id="tab-blocked"
+                        class="px-4 py-2 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white">
+                        Bloqueados <span id="count-blocked"
+                            class="ml-1 px-1.5 py-0.5 rounded-full bg-red-900/50 text-red-400 text-xs border border-red-700/50">0</span>
+                    </button>
+                    <button onclick="setTab('offline')" id="tab-offline"
+                        class="px-4 py-2 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white">
+                        Offline <span id="badge-offline"
+                            class="ml-1 px-1.5 py-0.5 rounded-full bg-gray-700 text-gray-300 text-xs">0</span>
+                    </button>
+                </div>
+
+                <span id="last-update"
+                    class="text-xs font-mono text-gray-400 bg-gray-800/50 px-3 py-1 rounded-full hidden md:inline-block">
                     <i class="fas fa-clock mr-1"></i> Actualizando...
                 </span>
             </div>
-            <div id="device-list" class="divide-y divide-gray-700/50 p-4 space-y-3">
+
+            <div id="device-list" class="divide-y divide-gray-700/50 p-4 space-y-3 min-h-[300px]">
                 <!-- Devices will be injected here -->
                 <div class="p-12 text-center text-gray-500">
                     <i class="fas fa-spinner fa-spin text-4xl mb-4 text-blue-500"></i>
                     <p>Iniciando escáner de red...</p>
                 </div>
             </div>
+
+            <!-- Pagination -->
+            <div class="px-6 py-4 border-t border-gray-700/50 bg-black/10 flex justify-between items-center">
+                <span class="text-sm text-gray-400" id="pagination-info">Mostrando 0-0 de 0</span>
+                <div class="flex gap-2">
+                    <button id="btn-prev" onclick="changePage(-1)"
+                        class="px-3 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <div id="pagination-pages" class="flex gap-1"></div>
+                    <button id="btn-next" onclick="changePage(1)"
+                        class="px-3 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                        <i class="fas fa-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
     <!-- Scripts -->
-    <script src="/static/js/app.js?v=6"></script>
+    <script src="/static/js/app.js?v=15"></script>
 </body>
 
 </html>
