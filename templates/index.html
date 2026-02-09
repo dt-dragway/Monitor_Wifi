@@ -52,15 +52,24 @@
                     <p class="text-gray-400 text-sm">Sistema de Vigilancia de Red Avanzado</p>
                 </div>
             </div>
-            <button onclick="triggerScan()"
-                class="group relative px-6 py-3 font-bold text-white rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 shadow-lg shadow-indigo-500/40 hover:shadow-indigo-500/60 transition-all duration-300 overflow-hidden">
-                <span class="relative z-10 flex items-center gap-2">
-                    <i class="fas fa-radar"></i> Escanear Red
-                </span>
-                <div
-                    class="absolute inset-0 bg-gradient-to-r from-indigo-600 to-blue-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+            <div class="flex items-center gap-4">
+                <!-- Security Shield -->
+                <div id="security-shield"
+                    class="p-3 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition-all duration-300"
+                    title="Red Segura">
+                    <i class="fas fa-shield-alt text-2xl"></i>
                 </div>
-            </button>
+
+                <button onclick="triggerScan()"
+                    class="group relative px-6 py-3 font-bold text-white rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 shadow-lg shadow-indigo-500/40 hover:shadow-indigo-500/60 transition-all duration-300 overflow-hidden">
+                    <span class="relative z-10 flex items-center gap-2">
+                        <i class="fas fa-radar"></i> Escanear Red
+                    </span>
+                    <div
+                        class="absolute inset-0 bg-gradient-to-r from-indigo-600 to-blue-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                    </div>
+                </button>
+            </div>
         </header>
 
         <!-- Stats -->
@@ -135,7 +144,7 @@
     </div>
 
     <!-- Scripts -->
-    <script src="/static/js/app.js?v=3"></script>
+    <script src="/static/js/app.js?v=6"></script>
 </body>
 
 </html>

@@ -6,3 +6,4 @@ jinja2
 python-multipart
 sqlmodel
 mac-vendor-lookup
+python-nmap

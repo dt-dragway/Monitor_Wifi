@@ -11,6 +11,10 @@ from typing import List
 from backend.database import create_db_and_tables, get_session, engine
 from backend.models import Device
 from backend.service import update_network_status
+from backend.nmap_scanner import scan_device_details, scan_vulnerabilities
+from backend.mitm_detector import mitm_detector
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 # Variable global para controlar el hilo
 scanning_active = True
@@ -77,3 +81,38 @@ def set_alias(mac: str, alias: str, session: Session = Depends(get_session)):
 def trigger_scan(background_tasks: BackgroundTasks):
     background_tasks.add_task(update_network_status)
     return {"message": "Escaneo iniciado manualmente"}
+
+@app.post("/api/scan/{ip}/deep")
+async def deep_scan(ip: str):
+    """
+    Ejecuta un escaneo profundo (Nmap) sobre una IP específica.
+    """
+    loop = asyncio.get_event_loop()
+    # Ejecutar en un hilo separado para no bloquear
+    with ThreadPoolExecutor() as pool:
+        result = await loop.run_in_executor(pool, scan_device_details, ip)
+    
+    if "error" in result:
+        # Si falla (ej: nmap no instalado), devolvemos el error pero como 200/JSON para manejarlo en front
+        return {"success": False, "error": result["error"]}
+        
+    return {"success": True, "data": result}
+
+@app.post("/api/scan/{ip}/audit")
+async def audit_device(ip: str):
+    """
+    Ejecuta una auditoría de seguridad (vulnerabilidades) sobre una IP.
+    """
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as pool:
+        result = await loop.run_in_executor(pool, scan_vulnerabilities, ip)
+        
+    return result
+
+@app.get("/api/security/status")
+def get_security_status():
+    """
+    Retorna el estado de seguridad de la red (MITM check).
+    """
+    # Ejecutar chequeo (puede ser ligero, no bloqueante si usa cache de tiempo)
+    return mitm_detector.check_security()

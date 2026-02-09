@@ -113,6 +113,12 @@ function renderDevices(devices) {
                 <button onclick="editAlias('${device.mac}', '${device.alias || ''}')" class="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white transition-all border border-blue-500/30" title="Editar Nombre">
                     <i class="fas fa-pen"></i>
                 </button>
+                <button onclick="triggerDeepScan('${device.ip}')" class="p-2 rounded-lg bg-green-600/20 hover:bg-green-600 text-green-400 hover:text-white transition-all border border-green-500/30" title="Escaneo Profundo (Nmap)">
+                    <i class="fas fa-microscope"></i>
+                </button>
+                <button onclick="triggerAudit('${device.ip}')" class="p-2 rounded-lg bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white transition-all border border-red-500/30" title="Auditoría de Vulnerabilidades (CVE)">
+                    <i class="fas fa-bug"></i>
+                </button>
                 ${!isTrusted ? `
                     <button onclick="setTrust('${device.mac}', true)" class="px-4 py-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white transition-all border border-emerald-500/30 font-medium text-sm flex items-center gap-2" title="Hacer de Confianza">
                         <i class="fas fa-shield-alt"></i> Confiar
@@ -225,6 +231,192 @@ async function triggerScan() {
     }
 }
 
+async function triggerDeepScan(ip) {
+    if (!ip) return;
+
+    // Mostrar loader
+    Swal.fire({
+        title: 'Escaneo Profundo en curso...',
+        text: `Analizando ${ip} con Nmap (Detectando OS y Puertos). Esto puede tardar unos segundos.`,
+        icon: 'info',
+        allowOutsideClick: false,
+        showConfirmButton: false,
+        background: '#1e293b',
+        color: '#fff',
+        willOpen: () => {
+            Swal.showLoading()
+        }
+    });
+
+    try {
+        const response = await fetch(`${API_URL}/scan/${ip}/deep`, { method: 'POST' });
+        const result = await response.json();
+
+        Swal.close(); // Cerrar loader
+
+        if (result.success) {
+            const data = result.data;
+            const portsList = data.ports.length > 0
+                ? `<ul style="text-align: left; margin-top: 10px;">${data.ports.map(p => `<li>🔹 ${p}</li>`).join('')}</ul>`
+                : "No se detectaron puertos abiertos (o firewall activo).";
+
+            Swal.fire({
+                title: 'Resultados del Escaneo',
+                html: `
+                    <div style="text-align: left;">
+                        <p><strong>IP:</strong> ${ip}</p>
+                        <p><strong>OS Detectado:</strong> ${data.os || 'Desconocido'}</p>
+                        <p><strong>Hostname (Nmap):</strong> ${data.hostname || 'No resuelto'}</p>
+                        <hr style="margin: 10px 0; border-color: #475569;">
+                        <p><strong>Puertos Abiertos:</strong></p>
+                        ${portsList}
+                    </div>
+                `,
+                icon: 'success',
+                background: '#1e293b',
+                color: '#fff'
+            });
+        } else {
+            Swal.fire({
+                title: 'Error en Escaneo',
+                text: result.error || "No se pudo completar el análisis.",
+                icon: 'error',
+                background: '#1e293b',
+                color: '#fff'
+            });
+        }
+    } catch (e) {
+        Swal.fire({
+            title: 'Error de Conexión',
+            text: "Fallo al comunicar con el servidor.",
+            icon: 'error',
+            background: '#1e293b',
+            color: '#fff'
+        });
+    }
+}
+
+async function triggerAudit(ip) {
+    if (!ip) return;
+
+    // Mostrar loader
+    Swal.fire({
+        title: 'Auditoría de Seguridad (CVEs)',
+        text: `Ejecutando scripts de vulnerabilidad en ${ip}. ESTO PUEDE TARDAR VARIOS MINUTOS. Por favor espere...`,
+        icon: 'warning',
+        allowOutsideClick: false,
+        showConfirmButton: false,
+        background: '#1e293b',
+        color: '#fff',
+        willOpen: () => {
+            Swal.showLoading()
+        }
+    });
+
+    try {
+        const response = await fetch(`${API_URL}/scan/${ip}/audit`, { method: 'POST' });
+        const result = await response.json();
+
+        Swal.close();
+
+        if (result.error) {
+            Swal.fire({
+                title: 'Error en Auditoría',
+                text: result.error,
+                icon: 'error',
+                background: '#1e293b',
+                color: '#fff'
+            });
+            return;
+        }
+
+        const vulns = result.vulnerabilities || [];
+        let htmlContent = "";
+
+        if (vulns.length === 0) {
+            htmlContent = "<p class='text-green-400'>✅ No se detectaron vulnerabilidades conocidas con los scripts actuales.</p>";
+        } else {
+            htmlContent = `<div style="text-align: left; max-height: 300px; overflow-y: auto;">`;
+            vulns.forEach(v => {
+                // Puede venir como objeto (hostscript) o dictionary con port
+                if (v.id && v.output) {
+                    // Host script result
+                    htmlContent += `<div class="mb-2 p-2 bg-red-900/40 rounded border border-red-700">
+                        <p class="font-bold text-red-300">⚠️ ${v.id}</p>
+                        <pre class="text-xs text-gray-300 whitespace-pre-wrap">${v.output}</pre>
+                     </div>`;
+                } else if (v.script && v.output) {
+                    // Port script result
+                    htmlContent += `<div class="mb-2 p-2 bg-red-900/40 rounded border border-red-700">
+                        <p class="font-bold text-red-300">⚠️ Puerto ${v.port} - ${v.script}</p>
+                        <pre class="text-xs text-gray-300 whitespace-pre-wrap">${v.output}</pre>
+                     </div>`;
+                }
+            });
+            htmlContent += "</div>";
+        }
+
+        Swal.fire({
+            title: `Reporte de Seguridad: ${ip}`,
+            html: htmlContent,
+            icon: vulns.length > 0 ? 'warning' : 'success',
+            background: '#1e293b',
+            color: '#fff',
+            width: '600px'
+        });
+
+    } catch (e) {
+        Swal.fire({
+            title: 'Error de Conexión',
+            text: "Fallo al comunicar con el servidor.",
+            icon: 'error',
+            background: '#1e293b',
+            color: '#fff'
+        });
+    }
+}
+
+async function checkSecurityStatus() {
+    try {
+        const response = await fetch(`${API_URL}/security/status`);
+        const data = await response.json();
+
+        const shield = document.getElementById('security-shield');
+        const icon = shield.querySelector('i');
+
+        if (data.status === 'secure') {
+            shield.className = "p-3 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition-all duration-300";
+            icon.className = "fas fa-shield-alt text-2xl";
+            shield.title = "Red Segura";
+        } else if (data.status === 'danger') {
+            shield.className = "p-3 rounded-xl bg-red-600 text-white border border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.7)] animate-pulse transition-all duration-300";
+            icon.className = "fas fa-shield-virus text-2xl";
+            shield.title = "¡PELIGRO! Ataque Detectado";
+
+            // Mostrar alerta toast persistente si hay mensajes
+            if (data.alerts && data.alerts.length > 0) {
+                Toast.fire({
+                    icon: 'warning',
+                    title: 'ALERTA DE SEGURIDAD',
+                    text: data.alerts[0],
+                    background: '#7f1d1d',
+                    timer: 5000
+                });
+            }
+        } else if (data.status === 'warning') {
+            shield.className = "p-3 rounded-xl bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 transition-all duration-300";
+            icon.className = "fas fa-exclamation-triangle text-2xl";
+            shield.title = "Advertencia de Seguridad";
+        }
+    } catch (e) {
+        console.error("Error checking security status:", e);
+    }
+}
+
 // Poll every 5 seconds
 setInterval(fetchDevices, 5000);
+// Check security every 10 seconds
+setInterval(checkSecurityStatus, 10000);
+
 fetchDevices();
+checkSecurityStatus();
