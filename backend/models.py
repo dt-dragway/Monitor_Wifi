@@ -20,3 +20,14 @@ class EventLog(SQLModel, table=True):
     event_type: str # INFO, WARNING, DANGER, SYSTEM
     message: str
     device_mac: Optional[str] = None
+
+class Settings(SQLModel, table=True):
+    key: str = Field(primary_key=True)
+    value: str
+
+class SpeedTestResult(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    ping: float # ms
+    download: float # Mbps
+    upload: float # Mbps

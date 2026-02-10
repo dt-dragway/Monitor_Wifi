@@ -9,6 +9,10 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <!-- SweetAlert2 -->
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Vis.js -->
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <style>
         body {
             background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
@@ -38,176 +42,327 @@
     </style>
 </head>
 
-<body class="font-sans antialiased">
-    <div class="container mx-auto px-4 py-8">
-        <!-- Header -->
-        <header class="mb-10 flex flex-col md:flex-row justify-between items-center glass-panel p-6 rounded-2xl">
-            <div class="flex items-center mb-4 md:mb-0">
-                <div class="p-3 rounded-xl bg-blue-600 shadow-lg shadow-blue-500/30 mr-4">
-                    <i class="fas fa-network-wired text-white text-2xl"></i>
-                </div>
-                <div>
-                    <h1 class="text-3xl font-bold text-white tracking-tight">Monitor Wifi <span
-                            class="text-blue-400">Pro</span></h1>
-                    <p class="text-gray-400 text-sm">Sistema de Vigilancia de Red Avanzado</p>
-                </div>
-            </div>
-            <div class="flex items-center gap-4">
-                <!-- Security Shield -->
-                <div id="security-shield"
-                    class="p-3 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition-all duration-300"
-                    title="Red Segura">
-                    <i class="fas fa-shield-alt text-2xl"></i>
-                </div>
+<body class="font-sans antialiased text-slate-200 bg-slate-900 selection:bg-blue-500 selection:text-white">
 
-                <!-- Backup/Restore -->
-                <div class="flex gap-2">
-                    <button onclick="backupConfig()"
-                        class="p-3 rounded-xl bg-gray-700/50 hover:bg-gray-600 text-gray-300 border border-gray-600/30"
-                        title="Descargar Backup">
-                        <i class="fas fa-download"></i>
-                    </button>
-                    <label
-                        class="p-3 rounded-xl bg-gray-700/50 hover:bg-gray-600 text-gray-300 border border-gray-600/30 cursor-pointer"
-                        title="Restaurar Backup">
-                        <i class="fas fa-upload"></i>
-                        <input type="file" id="restoreFile" class="hidden" onchange="restoreConfig(this)">
-                    </label>
-                </div>
+    <div class="flex h-screen overflow-hidden">
 
-                <button onclick="triggerScan()"
-                    class="group relative px-6 py-3 font-bold text-white rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 shadow-lg shadow-indigo-500/40 hover:shadow-indigo-500/60 transition-all duration-300 overflow-hidden">
-                    <span class="relative z-10 flex items-center gap-2">
-                        <i class="fas fa-radar"></i> Escanear Red
-                    </span>
+        <!-- SIDEBAR -->
+        <aside
+            class="w-20 md:w-64 bg-slate-900/50 backdrop-blur-xl border-r border-white/10 flex flex-col justify-between transition-all duration-300 z-50">
+            <div>
+                <!-- Logo -->
+                <div
+                    class="h-20 flex items-center justify-center md:justify-start px-0 md:px-6 border-b border-white/5">
                     <div
-                        class="absolute inset-0 bg-gradient-to-r from-indigo-600 to-blue-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                        class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+                        <i class="fas fa-network-wired text-white text-lg"></i>
                     </div>
+                    <span class="ml-3 font-bold text-xl tracking-tight hidden md:block text-white">Net<span
+                            class="text-blue-400">Guard</span></span>
+                </div>
+
+                <!-- Nav -->
+                <nav class="mt-8 px-2 md:px-4 space-y-2">
+                    <button onclick="switchView('dashboard')" id="nav-dashboard"
+                        class="nav-item w-full flex items-center px-3 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-all group active">
+                        <i
+                            class="fas fa-chart-pie text-xl w-8 text-center group-hover:text-blue-400 transition-colors"></i>
+                        <span class="ml-3 font-medium hidden md:block">Dashboard</span>
+                    </button>
+
+                    <button onclick="switchView('devices')" id="nav-devices"
+                        class="nav-item w-full flex items-center px-3 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-all group">
+                        <i
+                            class="fas fa-desktop text-xl w-8 text-center group-hover:text-emerald-400 transition-colors"></i>
+                        <span class="ml-3 font-medium hidden md:block">Dispositivos</span>
+                    </button>
+
+                    <button onclick="switchView('map')" id="nav-map"
+                        class="nav-item w-full flex items-center px-3 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-all group">
+                        <i
+                            class="fas fa-project-diagram text-xl w-8 text-center group-hover:text-purple-400 transition-colors"></i>
+                        <span class="ml-3 font-medium hidden md:block">Mapa de Red</span>
+                    </button>
+
+                    <button onclick="switchView('speedtest')" id="nav-speedtest"
+                        class="nav-item w-full flex items-center px-3 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-all group">
+                        <i
+                            class="fas fa-tachometer-alt text-xl w-8 text-center group-hover:text-yellow-400 transition-colors"></i>
+                        <span class="ml-3 font-medium hidden md:block">Velocidad</span>
+                    </button>
+                </nav>
+            </div>
+
+            <!-- Bottom Actions -->
+            <div class="p-2 md:p-4 border-t border-white/5 space-y-2">
+                <button onclick="triggerScan()"
+                    class="w-full flex items-center justify-center px-3 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-900/20 hover:shadow-blue-900/40 hover:scale-[1.02] transition-all active:scale-95">
+                    <i class="fas fa-radar text-lg md:mr-2"></i>
+                    <span class="hidden md:block font-bold text-sm">Escanear</span>
+                </button>
+                <button onclick="openSettings()"
+                    class="w-full flex items-center justify-center px-3 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-all"
+                    title="Configuración">
+                    <i class="fas fa-cog text-xl"></i>
+                    <span class="hidden md:block ml-3 font-medium">Ajustes</span>
                 </button>
             </div>
-        </header>
+        </aside>
 
-        <!-- Stats -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-            <!-- Total -->
-            <div class="glass-panel rounded-2xl p-6 relative overflow-hidden group">
-                <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                    <i class="fas fa-users text-6xl text-blue-400"></i>
-                </div>
-                <div class="flex items-center">
-                    <div class="p-3 rounded-lg bg-blue-500/20 text-blue-400 mr-4">
-                        <i class="fas fa-desktop text-2xl"></i>
-                    </div>
-                    <div>
-                        <p class="text-gray-400 text-sm font-medium">Dispositivos Totales</p>
-                        <p class="text-3xl font-bold text-white" id="total-count">0</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Online -->
-            <div class="glass-panel rounded-2xl p-6 relative overflow-hidden group">
-                <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                    <i class="fas fa-wifi text-6xl text-emerald-400"></i>
-                </div>
-                <div class="flex items-center">
-                    <div class="p-3 rounded-lg bg-emerald-500/20 text-emerald-400 mr-4">
-                        <i class="fas fa-circle-check text-2xl"></i>
-                    </div>
-                    <div>
-                        <p class="text-gray-400 text-sm font-medium">En Línea</p>
-                        <p class="text-3xl font-bold text-white" id="online-count">0</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Intruders -->
-            <div class="glass-panel rounded-2xl p-6 relative overflow-hidden group border-red-500/30">
-                <div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                    <i class="fas fa-user-secret text-6xl text-red-500"></i>
-                </div>
-                <div class="flex items-center">
-                    <div class="p-3 rounded-lg bg-red-500/20 text-red-500 mr-4">
-                        <i class="fas fa-shield-virus text-2xl"></i>
-                    </div>
-                    <div>
-                        <p class="text-gray-400 text-sm font-medium">Intrusos Detectados</p>
-                        <p class="text-3xl font-bold text-red-400" id="intruder-count">0</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Device List -->
-        <div class="glass-panel rounded-2xl overflow-hidden">
+        <!-- MAIN CONTENT -->
+        <main class="flex-1 overflow-y-auto relative bg-[#0b1121] bg-opacity-95">
             <div
-                class="px-8 py-5 border-b border-gray-700/50 flex flex-col md:flex-row justify-between items-center bg-black/20 gap-4">
-                <h2 class="text-xl font-semibold text-white flex items-center gap-2">
-                    <i class="fas fa-list-ul text-blue-400"></i> Lista de Dispositivos
-                </h2>
-
-                <!-- Tabs -->
-                <div class="flex bg-gray-900/50 p-1 rounded-xl">
-                    <button onclick="setTab('all')" id="tab-all"
-                        class="px-4 py-2 rounded-lg text-sm font-medium transition-all text-white bg-blue-600 shadow-lg">
-                        Todos <span id="badge-all" class="ml-1 px-1.5 py-0.5 rounded-full bg-black/20 text-xs">0</span>
-                    </button>
-                    <button onclick="setTab('intruder')" id="tab-intruder"
-                        class="px-4 py-2 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white">
-                        Intrusos <span id="badge-intruder"
-                            class="ml-1 px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400 text-xs border border-red-500/30">0</span>
-                    </button>
-                    <button onclick="setTab('trusted')" id="tab-trusted"
-                        class="px-4 py-2 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white">
-                        Confiables <span id="badge-trusted"
-                            class="ml-1 px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-xs border border-emerald-500/30">0</span>
-                    </button>
-                    <button onclick="setTab('blocked')" id="tab-blocked"
-                        class="px-4 py-2 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white">
-                        Bloqueados <span id="count-blocked"
-                            class="ml-1 px-1.5 py-0.5 rounded-full bg-red-900/50 text-red-400 text-xs border border-red-700/50">0</span>
-                    </button>
-                    <button onclick="setTab('offline')" id="tab-offline"
-                        class="px-4 py-2 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white">
-                        Offline <span id="badge-offline"
-                            class="ml-1 px-1.5 py-0.5 rounded-full bg-gray-700 text-gray-300 text-xs">0</span>
-                    </button>
-                </div>
-
-                <span id="last-update"
-                    class="text-xs font-mono text-gray-400 bg-gray-800/50 px-3 py-1 rounded-full hidden md:inline-block">
-                    <i class="fas fa-clock mr-1"></i> Actualizando...
-                </span>
+                class="absolute inset-0 pointer-events-none bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mixed-blend-overlay">
             </div>
 
-            <div id="device-list" class="divide-y divide-gray-700/50 p-4 space-y-3 min-h-[300px]">
-                <!-- Devices will be injected here -->
-                <div class="p-12 text-center text-gray-500">
-                    <i class="fas fa-spinner fa-spin text-4xl mb-4 text-blue-500"></i>
-                    <p>Iniciando escáner de red...</p>
+            <!-- Header Mobile / Breadcrumbs -->
+            <header
+                class="h-16 flex items-center justify-between px-6 sticky top-0 z-40 bg-slate-900/80 backdrop-blur-md border-b border-white/5">
+                <h2 id="page-title" class="text-lg font-semibold text-white">Resumen General</h2>
+                <div class="flex items-center gap-4">
+                    <!-- Security Shield -->
+                    <div id="security-shield"
+                        class="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 cursor-help"
+                        title="Sistema Seguro">
+                        <i class="fas fa-shield-alt text-lg"></i>
+                    </div>
+                    <button onclick="showLogs()"
+                        class="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 relative">
+                        <i class="fas fa-bell"></i>
+                        <span
+                            class="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border border-slate-900"></span>
+                    </button>
                 </div>
-            </div>
+            </header>
 
-            <!-- Pagination -->
-            <div class="px-6 py-4 border-t border-gray-700/50 bg-black/10 flex justify-between items-center">
-                <span class="text-sm text-gray-400" id="pagination-info">Mostrando 0-0 de 0</span>
-                <div class="flex gap-2">
-                    <button id="btn-prev" onclick="changePage(-1)"
-                        class="px-3 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                        <i class="fas fa-chevron-left"></i>
-                    </button>
-                    <div id="pagination-pages" class="flex gap-1"></div>
-                    <button id="btn-next" onclick="changePage(1)"
-                        class="px-3 py-1 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                        <i class="fas fa-chevron-right"></i>
-                    </button>
+            <div class="p-6 max-w-7xl mx-auto space-y-6 pb-20">
+
+                <!-- VIEWS -->
+
+                <!-- VIEW 1: DASHBOARD -->
+                <div id="view-dashboard" class="view-section animate-fade-in">
+                    <!-- Stats Grid -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                        <!-- Total Devices -->
+                        <div class="glass-card p-5 rounded-2xl relative overflow-hidden group hover:border-blue-500/30">
+                            <div
+                                class="absolute -right-4 -top-4 w-24 h-24 bg-blue-500/10 rounded-full blur-xl group-hover:bg-blue-500/20 transition-all">
+                            </div>
+                            <div class="relative z-10">
+                                <p class="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Dispositivos
+                                </p>
+                                <div class="flex items-end gap-2">
+                                    <h3 class="text-3xl font-bold text-white" id="total-count">0</h3>
+                                    <span class="text-slate-500 text-sm mb-1">Detectados</span>
+                                </div>
+                            </div>
+                            <i
+                                class="fas fa-laptop absolute bottom-4 right-4 text-slate-700/50 text-4xl group-hover:text-blue-500/20 transition-all group-hover:scale-110"></i>
+                        </div>
+
+                        <!-- Online -->
+                        <div
+                            class="glass-card p-5 rounded-2xl relative overflow-hidden group hover:border-emerald-500/30">
+                            <div
+                                class="absolute -right-4 -top-4 w-24 h-24 bg-emerald-500/10 rounded-full blur-xl group-hover:bg-emerald-500/20 transition-all">
+                            </div>
+                            <div class="relative z-10">
+                                <p class="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">En Línea</p>
+                                <div class="flex items-end gap-2">
+                                    <h3 class="text-3xl font-bold text-emerald-400" id="online-count">0</h3>
+                                    <span class="text-emerald-500/60 text-sm mb-1">Activos</span>
+                                </div>
+                            </div>
+                            <i
+                                class="fas fa-wifi absolute bottom-4 right-4 text-emerald-900/40 text-4xl group-hover:text-emerald-500/20 transition-all group-hover:scale-110"></i>
+                        </div>
+
+                        <!-- Intruders -->
+                        <div class="glass-card p-5 rounded-2xl relative overflow-hidden group hover:border-red-500/30">
+                            <div
+                                class="absolute -right-4 -top-4 w-24 h-24 bg-red-500/10 rounded-full blur-xl group-hover:bg-red-500/20 transition-all">
+                            </div>
+                            <div class="relative z-10">
+                                <p class="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Intrusos</p>
+                                <div class="flex items-end gap-2">
+                                    <h3 class="text-3xl font-bold text-red-500" id="intruder-count">0</h3>
+                                    <span class="text-red-500/60 text-sm mb-1">Alerta</span>
+                                </div>
+                            </div>
+                            <i
+                                class="fas fa-user-secret absolute bottom-4 right-4 text-red-900/40 text-4xl group-hover:text-red-500/20 transition-all group-hover:scale-110"></i>
+                        </div>
+
+                        <!-- Internet -->
+                        <div class="glass-card p-5 rounded-2xl relative overflow-hidden group hover:border-yellow-500/30 cursor-pointer"
+                            onclick="switchView('speedtest')">
+                            <div
+                                class="absolute -right-4 -top-4 w-24 h-24 bg-yellow-500/10 rounded-full blur-xl group-hover:bg-yellow-500/20 transition-all">
+                            </div>
+                            <div class="relative z-10">
+                                <p class="text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Internet</p>
+                                <div class="flex items-end gap-2">
+                                    <h3 class="text-3xl font-bold text-white" id="dashboard-speed">---</h3>
+                                    <span class="text-slate-500 text-sm mb-1">Mbps</span>
+                                </div>
+                            </div>
+                            <i
+                                class="fas fa-tachometer-alt absolute bottom-4 right-4 text-slate-700/50 text-4xl group-hover:text-yellow-500/20 transition-all group-hover:scale-110"></i>
+                        </div>
+                    </div>
+
+                    <!-- Mini Charts Row -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <!-- Left: High Traffic Devices (Mini Table) -->
+                        <div class="lg:col-span-2 glass-panel p-6 rounded-2xl">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-lg font-semibold text-white">Mayor Consumo <span
+                                        class="text-xs text-slate-500 font-normal ml-2">(Top Talkers)</span></h3>
+                                <button onclick="switchView('devices')"
+                                    class="text-xs text-blue-400 hover:text-blue-300">Ver Todos</button>
+                            </div>
+                            <div id="top-talkers-list" class="space-y-3">
+                                <!-- Injected via JS -->
+                                <div class="animate-pulse flex space-x-4">
+                                    <div class="rounded-full bg-slate-700 h-10 w-10"></div>
+                                    <div class="flex-1 space-y-3 py-1">
+                                        <div class="h-2 bg-slate-700 rounded"></div>
+                                        <div class="h-2 bg-slate-700 rounded w-3/4"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right: Quick Actions / Recent Logs -->
+                        <div class="glass-panel p-6 rounded-2xl flex flex-col">
+                            <h3 class="text-lg font-semibold text-white mb-4">Actividad Reciente</h3>
+                            <div id="mini-logs" class="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar"
+                                style="max-h: 250px;">
+                                <!-- Logs injected -->
+                            </div>
+                        </div>
+                    </div>
                 </div>
+
+                <!-- VIEW 2: DEVICES (Full List) -->
+                <div id="view-devices" class="view-section hidden animate-fade-in">
+                    <div class="glass-panel rounded-2xl overflow-hidden flex flex-col h-[calc(100vh-140px)]">
+                        <!-- Toolbar -->
+                        <div
+                            class="px-6 py-4 border-b border-white/5 bg-slate-800/50 flex flex-wrap gap-3 items-center justify-between">
+                            <div class="flex bg-slate-900 rounded-lg p-1">
+                                <button onclick="setTab('all')"
+                                    class="tab-btn px-4 py-1.5 rounded-md text-sm font-medium transition-all bg-blue-600 text-white shadow-lg"
+                                    data-tab="all">Todos</button>
+                                <button onclick="setTab('intruder')"
+                                    class="tab-btn px-4 py-1.5 rounded-md text-sm font-medium transition-all text-slate-400 hover:text-white"
+                                    data-tab="intruder">Intrusos</button>
+                                <button onclick="setTab('trusted')"
+                                    class="tab-btn px-4 py-1.5 rounded-md text-sm font-medium transition-all text-slate-400 hover:text-white"
+                                    data-tab="trusted">Confiables</button>
+                                <button onclick="setTab('blocked')"
+                                    class="tab-btn px-4 py-1.5 rounded-md text-sm font-medium transition-all text-slate-400 hover:text-white"
+                                    data-tab="blocked">Bloqueados</button>
+                                <button onclick="setTab('offline')"
+                                    class="tab-btn px-4 py-1.5 rounded-md text-sm font-medium transition-all text-slate-400 hover:text-white"
+                                    data-tab="offline">Offline</button>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span id="last-update"
+                                    class="text-xs font-mono text-slate-500 bg-slate-900/50 px-2 py-1 rounded">Actualizando...</span>
+                                <div
+                                    class="bg-gray-700/50 rounded-lg flex items-center px-3 py-1.5 border border-white/5">
+                                    <i class="fas fa-search text-gray-400 text-xs mr-2"></i>
+                                    <input type="text" id="device-search" placeholder="Buscar..."
+                                        class="bg-transparent border-none outline-none text-sm text-white w-24 md:w-40 placeholder-gray-500">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- List Area -->
+                        <div id="device-list" class="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
+                            <!-- Rows -->
+                        </div>
+
+                        <!-- Pagination -->
+                        <div
+                            class="px-6 py-3 border-t border-white/5 bg-slate-900/30 flex justify-between items-center text-sm">
+                            <span class="text-slate-500" id="pagination-info">0-0 de 0</span>
+                            <div class="flex gap-2">
+                                <button id="btn-prev" onclick="changePage(-1)"
+                                    class="w-8 h-8 rounded bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300 disabled:opacity-50"><i
+                                        class="fas fa-chevron-left"></i></button>
+                                <button id="btn-next" onclick="changePage(1)"
+                                    class="w-8 h-8 rounded bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300 disabled:opacity-50"><i
+                                        class="fas fa-chevron-right"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VIEW 3: MAP -->
+                <div id="view-map" class="view-section hidden animate-fade-in h-[calc(100vh-140px)]">
+                    <div class="glass-panel p-1 rounded-2xl h-full relative">
+                        <div class="absolute top-4 left-4 z-10 flex gap-2">
+                            <div
+                                class="px-3 py-1 rounded bg-slate-900/80 backdrop-blur text-xs text-slate-300 border border-white/10 shadow-xl">
+                                <i class="fas fa-diamond text-yellow-500 mr-1"></i> Gateway
+                            </div>
+                            <div
+                                class="px-3 py-1 rounded bg-slate-900/80 backdrop-blur text-xs text-slate-300 border border-white/10 shadow-xl">
+                                <i class="fas fa-triangle text-red-500 mr-1"></i> Intruso
+                            </div>
+                            <div
+                                class="px-3 py-1 rounded bg-slate-900/80 backdrop-blur text-xs text-slate-300 border border-white/10 shadow-xl">
+                                <i class="fas fa-circle text-blue-500 mr-1"></i> Dispositivo
+                            </div>
+                        </div>
+                        <button onclick="fetchTopology()"
+                            class="absolute top-4 right-4 z-10 p-2 bg-slate-800/80 rounded-lg text-white hover:bg-blue-600 transition-colors shadow-xl border border-white/10"><i
+                                class="fas fa-sync-alt"></i></button>
+                        <div id="mynetwork" class="w-full h-full rounded-xl bg-[#0f172a]"></div>
+                    </div>
+                </div>
+
+                <!-- VIEW 4: SPEEDTEST -->
+                <div id="view-speedtest"
+                    class="view-section hidden animate-fade-in h-[calc(100vh-140px)] flex flex-col justify-center">
+                    <div class="glass-panel p-8 rounded-2xl max-w-4xl mx-auto w-full relative overflow-hidden">
+                        <!-- Background Glow -->
+                        <div
+                            class="absolute top-0 right-0 w-64 h-64 bg-yellow-500/10 rounded-full blur-3xl pointer-events-none">
+                        </div>
+
+                        <div class="flex justify-between items-end mb-8 relative z-10">
+                            <div>
+                                <h1 class="text-3xl font-bold text-white mb-2">Monitor de Velocidad</h1>
+                                <p class="text-slate-400">Historial de rendimiento y latencia</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-xs text-slate-500 font-mono mb-1">ÚLTIMO TEST</p>
+                                <p id="last-speedtest-lg" class="text-lg text-yellow-400 font-mono font-bold">Waiting...
+                                </p>
+                            </div>
+                        </div>
+
+                        <div
+                            class="h-80 w-full mb-8 relative z-10 p-4 bg-slate-900/50 rounded-xl border border-white/5">
+                            <canvas id="speedChart"></canvas>
+                        </div>
+
+                        <div class="flex justify-center relative z-10">
+                            <button onclick="runSpeedtest()" id="btn-speedtest-lg"
+                                class="px-8 py-4 rounded-xl bg-gradient-to-r from-yellow-600 to-orange-600 text-white font-bold text-lg shadow-lg shadow-orange-900/20 hover:scale-105 transition-transform flex items-center gap-3">
+                                <i class="fas fa-rocket"></i> <span>Iniciar Test de Velocidad</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
             </div>
-        </div>
+        </main>
     </div>
 
     <!-- Scripts -->
-    <script src="/static/js/app.js?v=15"></script>
+    <script src="/static/js/app.js?v=23"></script>
 </body>
-
-</html>

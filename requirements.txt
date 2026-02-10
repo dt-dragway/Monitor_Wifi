@@ -7,3 +7,4 @@ python-multipart
 sqlmodel
 mac-vendor-lookup
 python-nmap
+git+https://github.com/sivel/speedtest-cli.git

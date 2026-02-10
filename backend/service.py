@@ -111,6 +111,8 @@ def update_network_status():
                 new_device = Device(mac=mac, ip=ip, vendor=vendor, alias=alias, status="online", is_trusted=is_trusted, interface=interface)
                 session.add(new_device)
                 print(f"Nuevo dispositivo detectado: {ip} ({mac}) - {vendor} / {alias} [{interface}]")
+                from .logger import log_event
+                log_event("INFO", f"Nuevo dispositivo detectado: {vendor} ({ip})", mac)
 
         # 2. Manejar dispositivos que ya no están (Offline)
         # Buscar dispositivos que estaban online pero NO están en active_macs
@@ -131,6 +133,8 @@ def update_network_status():
                 
                 device.status = "offline"
                 session.add(device)
+                from .logger import log_event
+                log_event("INFO", f"Dispositivo desconectado: {device.alias or device.vendor} ({device.ip})", device.mac)
         
         session.commit()
     print("Red actualizada.")

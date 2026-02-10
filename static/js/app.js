@@ -55,9 +55,134 @@ function getDeviceIcon(vendor, alias) {
 }
 
 let currentTab = 'all';
-let currentPage = 1;
-const ITEMS_PER_PAGE = 5;
+let currentPage = ITEMS_PER_PAGE = 8;
 let allDevices = [];
+let trafficStats = {}; // Global store for traffic
+let currentView = 'dashboard';
+
+// --- TRAFFIC STATS ---
+async function fetchTrafficStats() {
+    try {
+        const res = await fetch(`${API_URL}/traffic`);
+        if (res.ok) {
+            trafficStats = await res.json();
+            // Re-render only if current view depends on it
+            if (currentView === 'dashboard') updateDashboardData(allDevices);
+            if (currentView === 'devices') renderDevices(allDevices);
+        }
+    } catch (e) { console.error("Traffic fetch error", e); }
+}
+
+// Start polling for traffic
+setInterval(fetchTrafficStats, 2000);
+fetchTrafficStats();
+
+// --- VIEW MANAGEMENT (Phase 23) ---
+function switchView(viewName) {
+    // Hide all views
+    document.querySelectorAll('.view-section').forEach(el => el.classList.add('hidden'));
+
+    // Deactivate nav items
+    document.querySelectorAll('.nav-item').forEach(el => {
+        el.classList.remove('bg-white/5', 'text-white', 'shadow-inner');
+        el.classList.add('text-slate-400');
+    });
+
+    // Show target view
+    const target = document.getElementById(`view-${viewName}`);
+    if (target) {
+        target.classList.remove('hidden');
+        target.classList.add('animate-fade-in');
+    }
+
+    // Activate nav item
+    const nav = document.getElementById(`nav-${viewName}`);
+    if (nav) {
+        nav.classList.add('bg-white/5', 'text-white', 'shadow-inner');
+        nav.classList.remove('text-slate-400');
+    }
+
+    currentView = viewName;
+    const titles = {
+        'dashboard': 'Resumen General',
+        'devices': 'Gestión de Dispositivos',
+        'map': 'Mapa de Red',
+        'speedtest': 'Monitor de Velocidad'
+    };
+    if (document.getElementById('page-title')) document.getElementById('page-title').innerText = titles[viewName] || 'Dashboard';
+
+    // View specific logic
+    if (viewName === 'speedtest') {
+        fetchSpeedHistory();
+        setTimeout(() => { if (speedChart) speedChart.resize(); }, 100);
+    }
+    if (viewName === 'map') fetchTopology();
+    if (viewName === 'devices') renderDevices(allDevices);
+}
+
+// Ensure defaults
+window.addEventListener('load', () => {
+    switchView('dashboard');
+});
+
+// Create Global updateStats function with Top Talkers
+window.updateStats = function (devices) {
+    const total = devices.length;
+    const online = devices.filter(d => d.status === 'online').length;
+    // Intruders logic: Online + Not Trusted + Not Blocked
+    const intruders = devices.filter(d => d.status === 'online' && !d.is_trusted && !d.is_blocked).length;
+
+    // Use animateValue if available, else direct set
+    if (typeof animateValue === 'function') {
+        animateValue("total-count", parseInt(document.getElementById("total-count").innerText) || 0, total, 1000);
+        animateValue("online-count", parseInt(document.getElementById("online-count").innerText) || 0, online, 1000);
+        animateValue("intruder-count", parseInt(document.getElementById("intruder-count").innerText) || 0, intruders, 1000);
+    } else {
+        document.getElementById('total-count').innerText = total;
+        document.getElementById('online-count').innerText = online;
+        document.getElementById('intruder-count').innerText = intruders;
+    }
+
+    // Top Talkers Logic
+    const topTalkers = devices
+        .filter(d => trafficStats[d.mac] > 0)
+        .sort((a, b) => (trafficStats[b.mac] || 0) - (trafficStats[a.mac] || 0))
+        .slice(0, 5);
+
+    const talkersList = document.getElementById('top-talkers-list');
+    if (talkersList) {
+        if (topTalkers.length === 0) {
+            talkersList.innerHTML = '<p class="text-slate-500 text-sm italic p-2">Esperando datos de tráfico...</p>';
+        } else {
+            const maxTraffic = Math.max(...Object.values(trafficStats), 1);
+            talkersList.innerHTML = topTalkers.map(d => {
+                const traffic = trafficStats[d.mac] || 0;
+                const percent = (traffic / maxTraffic) * 100;
+                const icon = getDeviceIcon(d.vendor || "", d.alias || "");
+                return `
+                <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-white/5 transition-colors">
+                    <div class="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-slate-300 shadow-sm border border-white/5 text-lg">
+                        ${icon}
+                    </div>
+                    <div class="flex-1">
+                        <div class="flex justify-between text-xs mb-1">
+                            <span class="font-medium text-slate-200">${d.alias || d.vendor || d.ip}</span>
+                            <span class="font-mono text-slate-400">${traffic} pkts</span>
+                        </div>
+                        <div class="w-full bg-slate-700/50 rounded-full h-1.5 overflow-hidden">
+                            <div class="bg-blue-500 h-1.5 rounded-full" style="width: ${percent}%"></div>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+    }
+
+    // Last Update Time
+    const now = new Date();
+    const updateEl = document.getElementById('last-update');
+    if (updateEl) updateEl.innerHTML = `<i class="fas fa-clock mr-1"></i> ${now.toLocaleTimeString()}`;
+};
 
 function setTab(tab) {
     currentTab = tab;
@@ -67,15 +192,30 @@ function setTab(tab) {
 }
 
 function updateTabsUI() {
-    ['all', 'intruder', 'trusted', 'blocked', 'offline'].forEach(t => {
-        const btn = document.getElementById(`tab-${t}`);
+    const tabs = ['all', 'intruder', 'trusted', 'blocked', 'offline'];
+
+    tabs.forEach(t => {
+        // Select by data-tab attribute since IDs might be missing
+        const btn = document.querySelector(`button[data-tab="${t}"]`);
         if (!btn) return;
+
         if (t === currentTab) {
-            btn.className = "px-4 py-2 rounded-lg text-sm font-bold transition-all text-white bg-blue-600 shadow-lg transform scale-105";
+            // Active Styles based on type
+            let colorClass = "bg-blue-600 shadow-blue-500/50"; // Default All
+            if (t === 'intruder') colorClass = "bg-red-600 shadow-red-500/50";
+            if (t === 'trusted') colorClass = "bg-emerald-600 shadow-emerald-500/50";
+            if (t === 'blocked') colorClass = "bg-slate-700 border border-red-500/30 text-red-400";
+            if (t === 'offline') colorClass = "bg-slate-600";
+
+            btn.className = `px-4 py-1.5 rounded-md text-sm font-bold transition-all text-white shadow-lg transform scale-105 ${colorClass}`;
+            // Ensure no conflicting hover classes
         } else {
-            btn.className = "px-4 py-2 rounded-lg text-sm font-medium transition-all text-gray-400 hover:text-white hover:bg-white/5";
+            // Inactive Styles
+            btn.className = "px-4 py-1.5 rounded-md text-sm font-medium transition-all text-slate-400 hover:text-white hover:bg-white/5";
         }
     });
+
+    // Also update stats if needed or handled globally
 }
 
 function changePage(delta) {
@@ -101,21 +241,16 @@ function renderDevices(devices) {
         return true; // all
     });
 
-    // Update Badges
+    // Update Badges (Phase 23)
     const countBlocked = devices.filter(d => jailedDevices.includes(d.ip) || blockedDevices.includes(d.mac)).length;
 
-    document.getElementById('badge-all').innerText = devices.length;
-    // Intruders exclude blocked ones now, to keep the list clean
-    document.getElementById('badge-intruder').innerText = devices.filter(d => !d.is_trusted && d.status === 'online' && !jailedDevices.includes(d.ip) && !blockedDevices.includes(d.mac)).length;
-    document.getElementById('badge-trusted').innerText = devices.filter(d => d.is_trusted && d.status === 'online').length;
-    document.getElementById('badge-offline').innerText = devices.filter(d => d.status === 'offline').length;
+    if (document.getElementById('badge-all')) document.getElementById('badge-all').innerText = devices.length;
+    if (document.getElementById('badge-intruder')) document.getElementById('badge-intruder').innerText = devices.filter(d => !d.is_trusted && d.status === 'online' && !jailedDevices.includes(d.ip) && !blockedDevices.includes(d.mac)).length;
+    if (document.getElementById('badge-trusted')) document.getElementById('badge-trusted').innerText = devices.filter(d => d.is_trusted && d.status === 'online').length;
+    if (document.getElementById('badge-offline')) document.getElementById('badge-offline').innerText = devices.filter(d => d.status === 'offline').length;
 
-    // Tab counters (UI update if elements exist)
-    if (document.getElementById('count-all')) document.getElementById('count-all').innerText = devices.length;
-    if (document.getElementById('count-intruders')) document.getElementById('count-intruders').innerText = document.getElementById('badge-intruder').innerText;
-    if (document.getElementById('count-trusted')) document.getElementById('count-trusted').innerText = document.getElementById('badge-trusted').innerText;
-    if (document.getElementById('count-blocked')) document.getElementById('count-blocked').innerText = countBlocked;
-    if (document.getElementById('count-offline')) document.getElementById('count-offline').innerText = document.getElementById('badge-offline').innerText;
+    // UI for Tab Badges in new layout
+    // Assuming standard IDs from index.html
 
     // 2. Sort (Blocked > Intruder > Online > Offline)
     filtered.sort((a, b) => {
@@ -138,18 +273,19 @@ function renderDevices(devices) {
     const paginated = filtered.slice(start, end);
 
     // Update Pagination UI
-    document.getElementById('pagination-info').innerText = `Mostrando ${filtered.length > 0 ? start + 1 : 0}-${Math.min(end, filtered.length)} de ${filtered.length}`;
-    document.getElementById('btn-prev').disabled = currentPage === 1;
-    document.getElementById('btn-next').disabled = currentPage === totalPages;
+    if (document.getElementById('pagination-info')) document.getElementById('pagination-info').innerText = `${filtered.length > 0 ? start + 1 : 0}-${Math.min(end, filtered.length)} de ${filtered.length}`;
+    if (document.getElementById('btn-prev')) document.getElementById('btn-prev').disabled = currentPage === 1;
+    if (document.getElementById('btn-next')) document.getElementById('btn-next').disabled = currentPage === totalPages;
 
     // Render Grid
     const list = document.getElementById('device-list');
+    if (!list) return;
     list.innerHTML = '';
 
     if (paginated.length === 0) {
         list.innerHTML = `
-            <div class="p-12 text-center text-gray-400">
-                <i class="fas fa-filter text-4xl mb-4 opacity-50"></i>
+            <div class="p-12 text-center text-slate-500">
+                <i class="fas fa-filter text-4xl mb-4 opacity-30"></i>
                 <p>No hay dispositivos en esta categoría.</p>
             </div>`;
         return;
@@ -165,89 +301,112 @@ function renderDevices(devices) {
         const icon = getDeviceIcon(device.vendor || "", device.alias || "");
 
         let statusClass = "";
+        let statusBorder = "";
+
         if (isBlocked) {
-            statusClass = 'bg-gray-900/50 border-red-900/50 opacity-75 grayscale sepia';
+            statusClass = 'bg-slate-900/40 opacity-75 grayscale';
+            statusBorder = 'border-red-900/30 hover:border-red-500/50';
         } else if (isOnline) {
-            statusClass = isTrusted ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30';
+            statusClass = isTrusted ? 'bg-emerald-900/10' : 'bg-red-900/10';
+            statusBorder = isTrusted ? 'border-emerald-500/20 hover:border-emerald-500/40' : 'border-red-500/20 hover:border-red-500/40';
         } else {
-            statusClass = 'bg-white/5 border-white/10 opacity-60 grayscale';
+            statusClass = 'bg-slate-800/20 opacity-60 grayscale';
+            statusBorder = 'border-slate-700/30 hover:border-slate-500/30';
         }
 
         const item = document.createElement('div');
-        item.className = `p-4 rounded-xl border backdrop-blur-sm transition-all hover:scale-[1.01] ${statusClass} flex flex-col md:flex-row justify-between items-center mb-3 relative overflow-hidden`;
+        item.className = `p-4 rounded-xl border backdrop-blur-sm transition-all hover:scale-[1.01] ${statusClass} ${statusBorder} flex flex-col md:flex-row justify-between items-center mb-3 relative overflow-hidden group`;
 
         // Blocked Overlay
-        const lockedOverlay = isBlocked ? `<div class="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/10"><i class="fas fa-lock text-6xl text-red-500/20 rotate-12"></i></div>` : '';
+        const lockedOverlay = isBlocked ? `<div class="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/50 z-20"><i class="fas fa-lock text-5xl text-red-500/40 -rotate-12 drop-shadow-lg"></i></div>` : '';
 
         item.innerHTML = `
             ${lockedOverlay}
-            <div class="flex items-center w-full md:w-auto mb-3 md:mb-0 relative z-10">
-                <div class="w-12 h-12 rounded-full flex items-center justify-center bg-black/20 text-2xl mr-4 shadow-inner relative">
+            <div class="flex items-center w-full md:w-auto mb-3 md:mb-0 relative z-10 gap-4">
+                
+                <!-- Icon Box -->
+                <div class="w-12 h-12 rounded-xl flex items-center justify-center bg-slate-800/80 text-xl shadow-lg border border-white/5 relative group-hover:bg-slate-700 transition-colors">
                     ${icon}
-                    ${isOnline && !isBlocked ? '<div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-slate-900"></div>' : ''}
-                    ${isBlocked ? '<div class="absolute bottom-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-slate-900"></div>' : ''}
+                    ${isOnline && !isBlocked ? '<div class="absolute -bottom-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-slate-900 shadow-lg shadow-emerald-500/50"></div>' : ''}
+                    ${isBlocked ? '<div class="absolute -bottom-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-slate-900 shadow-lg shadow-red-500/50"></div>' : ''}
                 </div>
+                
+                <!-- Info -->
                 <div>
                     <div class="flex items-center gap-2">
-                        <h3 class="font-bold text-lg text-white">${device.alias || device.vendor || 'Dispositivo Desconocido'}</h3>
+                        <h3 class="font-bold text-base text-slate-100 group-hover:text-blue-300 transition-colors">${device.alias || device.vendor || 'Dispositivo Desconocido'}</h3>
+                        
+                        <!-- Mini Badges -->
                         ${isBlocked ?
-                '<span class="px-2 py-0.5 rounded-full text-xs bg-red-900/50 text-red-400 border border-red-700/50 font-bold">⛔ BLOQUEADO</span>'
+                '<span class="px-1.5 py-0.5 rounded text-[10px] bg-red-900/40 text-red-400 border border-red-800/50 font-bold uppercase tracking-wider">Bloqueado</span>'
                 : ''}
+                        
                         ${!isTrusted && isOnline && !isBlocked ?
-                '<span class="px-2 py-0.5 rounded-full text-xs bg-red-500/20 text-red-300 border border-red-500/30 font-bold shadow-lg shadow-red-500/20">⚠ INTRUSO</span>'
+                '<span class="px-1.5 py-0.5 rounded text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 font-bold uppercase tracking-wider animate-pulse">Intruso</span>'
                 : ''}
+
                         ${!isOnline ?
-                '<span class="px-2 py-0.5 rounded-full text-xs bg-gray-700 text-gray-400 font-mono">OFFLINE</span>'
+                '<span class="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-500 font-mono uppercase">Offline</span>'
                 : ''}
                     </div>
-                    </div>
-                    <div class="text-xs text-gray-400 mt-1 font-mono flex flex-wrap gap-4 items-center">
-                        <span title="IP Address"><i class="fas fa-ethernet"></i> ${device.ip}</span>
-                        <span title="MAC Address"><i class="fas fa-fingerprint"></i> ${device.mac}</span>
+                    
+                    <div class="text-xs text-slate-500 mt-1 font-mono flex flex-wrap gap-3 items-center">
+                        <span title="IP Address" class="hover:text-slate-300 cursor-help transition-colors"><i class="fas fa-ethernet mr-1.5"></i>${device.ip}</span>
+                        <span title="MAC Address" class="hover:text-slate-300 cursor-help transition-colors"><i class="fas fa-fingerprint mr-1.5"></i>${device.mac}</span>
                         ${device.interface ? `
-                            <span class="px-1.5 py-0.5 rounded bg-gray-700/50 border border-gray-600/50 text-gray-300" title="Interfaz de Conexión">
-                                ${device.interface.startsWith('wlan') || device.interface.startsWith('wifi') ? '<i class="fas fa-wifi text-blue-400"></i>' :
-                    device.interface.startsWith('eth') || device.interface.startsWith('en') ? '<i class="fas fa-network-wired text-green-400"></i>' :
-                        '<i class="fas fa-server text-purple-400"></i>'} 
+                            <span class="px-1 py-0.5 rounded bg-slate-800/80 border border-slate-700/50 text-[10px] text-slate-400 font-sans tracking-wide">
                                 ${device.interface}
                             </span>
                         ` : ''}
                     </div>
                 </div>
             </div>
+
+            <!-- Middle: Traffic Bar (Visual Candy) -->
+            <div class="hidden lg:block w-48 px-4 border-l border-r border-white/5 mx-6 opacity-80 group-hover:opacity-100 transition-opacity">
+                 <div class="text-[10px] text-slate-500 mb-1 flex justify-between font-mono">
+                    <span>Actividad</span>
+                    <span class="text-slate-300">${trafficStats[device.mac] || 0} pkt</span>
+                </div>
+                <div class="w-full bg-slate-800/50 rounded-full h-1">
+                     <div class="bg-blue-500 h-1 rounded-full transition-all duration-700 relative shadow-[0_0_10px_rgba(59,130,246,0.5)]" 
+                          style="width: ${Math.min(((trafficStats[device.mac] || 0) / (Math.max(...Object.values(trafficStats), 1))) * 100, 100)}%">
+                     </div>
+                </div>
+            </div>
             
-            <div class="flex gap-2 relative z-10">
+            <!-- Actions -->
+            <div class="flex gap-2 relative z-10 w-full md:w-auto justify-end mt-3 md:mt-0">
                  ${!isTrusted ? `
-                    <button onclick="setTrust('${device.mac}', true)" class="px-4 py-2 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white transition-all border border-emerald-500/30 font-medium text-sm flex items-center gap-2" title="Hacer de Confianza">
-                        <i class="fas fa-shield-alt"></i>
+                    <button onclick="setTrust('${device.mac}', true)" class="w-8 h-8 rounded-lg bg-emerald-500/10 hover:bg-emerald-500 text-emerald-500 hover:text-white transition-all border border-emerald-500/20 flex items-center justify-center" title="Hacer de Confianza">
+                        <i class="fas fa-check text-xs"></i>
                     </button>
                 ` : `
-                    <button onclick="setTrust('${device.mac}', false)" class="p-2 rounded-lg bg-orange-600/20 hover:bg-orange-600 text-orange-400 hover:text-white transition-all border border-orange-500/30" title="Quitar de Confianza">
-                        <i class="fas fa-ban"></i>
+                    <button onclick="setTrust('${device.mac}', false)" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-orange-500 text-slate-400 hover:text-white transition-all border border-slate-700 hover:border-orange-500 flex items-center justify-center" title="Quitar de Confianza">
+                        <i class="fas fa-ban text-xs"></i>
                     </button>
                 `}
 
-                <!-- UNIFIED ACTION BUTTON -->
                 ${isBlocked ? `
-                    <button onclick="unwarnDevice('${device.ip}'); unblockDevice('${device.mac}')" class="p-2 rounded-lg bg-gray-600/20 hover:bg-gray-500 text-gray-400 hover:text-white transition-all border border-gray-500/30" title="Desbloquear y Liberar">
-                        <i class="fas fa-unlock"></i>
+                    <button onclick="unwarnDevice('${device.ip}'); unblockDevice('${device.mac}')" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-600 text-slate-400 hover:text-white transition-all border border-slate-700 flex items-center justify-center" title="Desbloquear">
+                        <i class="fas fa-unlock text-xs"></i>
                     </button>
                 ` : `
-                    <button onclick="warnDevice('${device.ip}')" class="p-2 rounded-lg bg-red-600 hover:bg-red-700 text-white transition-all border border-red-500/50 shadow-lg shadow-red-500/30" title="BLOQUEAR Y ALERTAR (Wall of Shame)">
-                        <i class="fas fa-lock"></i>
+                    <button onclick="warnDevice('${device.ip}')" class="w-8 h-8 rounded-lg bg-red-500/10 hover:bg-red-600 text-red-500 hover:text-white transition-all border border-red-500/20 shadow-lg shadow-red-500/10 flex items-center justify-center" title="BLOQUEAR">
+                        <i class="fas fa-lock text-xs"></i>
                     </button>
                 `}
                 
-                <button onclick="editAlias('${device.mac}', '${device.alias || ''}')" class="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white transition-all border border-blue-500/30" title="Editar Nombre">
-                    <i class="fas fa-pen"></i>
+                <button onclick="editAlias('${device.mac}', '${device.alias || ''}')" class="w-8 h-8 rounded-lg bg-blue-500/10 hover:bg-blue-600 text-blue-500 hover:text-white transition-all border border-blue-500/20 flex items-center justify-center" title="Editar Nombre">
+                    <i class="fas fa-pen text-xs"></i>
                 </button>
                 
-                <button onclick="triggerDeepScan('${device.ip}')" class="p-2 rounded-lg bg-purple-600/20 hover:bg-purple-600 text-purple-400 hover:text-white transition-all border border-purple-500/30" title="Escaneo Profundo (Nmap)">
-                    <i class="fas fa-microscope"></i>
+                <button onclick="triggerDeepScan('${device.ip}')" class="w-8 h-8 rounded-lg bg-purple-500/10 hover:bg-purple-600 text-purple-500 hover:text-white transition-all border border-purple-500/20 flex items-center justify-center" title="Scan Nmap">
+                    <i class="fas fa-search text-xs"></i>
                 </button>
 
-                <button onclick="triggerAudit('${device.ip}')" class="p-2 rounded-lg bg-pink-600/20 hover:bg-pink-600 text-pink-400 hover:text-white transition-all border border-pink-500/30" title="Auditoría de Seguridad (Vulns)">
-                    <i class="fas fa-bug"></i>
+                <button onclick="triggerAudit('${device.ip}')" class="w-8 h-8 rounded-lg bg-pink-500/10 hover:bg-pink-600 text-pink-500 hover:text-white transition-all border border-pink-500/20 flex items-center justify-center" title="Auditoría de Seguridad (Vulns)">
+                    <i class="fas fa-bug text-xs"></i>
                 </button>
             </div>
         `;
@@ -722,6 +881,426 @@ window.restoreConfig = async function (input) {
     input.value = ''; // Reset input to allow re-upload same file
 }
 
+
+// --- TIMELINE / LOGS ---
+async function showLogs() {
+    Swal.fire({
+        title: 'Bitácora de Eventos',
+        html: `
+            <div id="logs-container" class="text-left max-h-[60vh] overflow-y-auto space-y-2 p-2">
+                <div class="text-center text-gray-400"><i class="fas fa-spinner fa-spin"></i> Cargando...</div>
+            </div>
+        `,
+        width: '800px',
+        showConfirmButton: false,
+        showCloseButton: true,
+        background: '#0f172a',
+        color: '#f8fafc',
+        didOpen: () => {
+            fetchLogs();
+        }
+    });
+}
+
+async function fetchLogs() {
+    try {
+        const response = await fetch(`${API_URL}/events?limit=50`);
+        const events = await response.json();
+        renderLogs(events);
+    } catch (e) {
+        document.getElementById('logs-container').innerHTML = '<div class="text-red-400">Error cargando logs.</div>';
+    }
+}
+
+function renderLogs(events) {
+    const container = document.getElementById('logs-container');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    if (events.length === 0) {
+        container.innerHTML = '<div class="text-gray-500 text-center py-4">No hay eventos registrados.</div>';
+        return;
+    }
+
+    events.forEach(event => {
+        let icon = 'fas fa-info-circle';
+        let color = 'text-blue-400';
+        let bg = 'bg-blue-900/20';
+
+        if (event.event_type === 'WARNING') { icon = 'fas fa-exclamation-triangle'; color = 'text-yellow-400'; bg = 'bg-yellow-900/20'; }
+        if (event.event_type === 'DANGER') { icon = 'fas fa-radiation'; color = 'text-red-500'; bg = 'bg-red-900/20'; }
+        if (event.event_type === 'SYSTEM') { icon = 'fas fa-cog'; color = 'text-gray-400'; bg = 'bg-gray-800/50'; }
+
+        // Formatear fecha UTC a local
+        const date = new Date(event.timestamp + "Z"); // Asumimos timestamp viene sin Z pero es UTC
+        const timeStr = date.toLocaleString();
+
+        const item = document.createElement('div');
+        item.className = `flex items-start gap-3 p-3 rounded-lg border border-gray-700/50 ${bg}`;
+        item.innerHTML = `
+            <div class="mt-1 ${color}"><i class="${icon}"></i></div>
+            <div class="flex-1">
+                <div class="flex justify-between items-start">
+                     <span class="font-medium text-gray-200 text-sm">${event.message}</span>
+                     <span class="text-xs text-gray-500 font-mono ml-2 whitespace-nowrap">${timeStr}</span>
+                </div>
+                ${event.device_mac ? `<div class="text-xs text-gray-500 font-mono mt-0.5"><i class="fas fa-fingerprint opacity-50"></i> ${event.device_mac}</div>` : ''}
+            </div>
+        `;
+        container.appendChild(item);
+    });
+}
+
 setInterval(fetchJailedDevices, 5000);
 fetchJailedDevices();
+
+// --- SETTINGS ---
+async function openSettings() {
+    // 1. Get current webhook
+    let currentUrl = '';
+    try {
+        const res = await fetch(`${API_URL}/settings/webhook`);
+        if (res.ok) {
+            const data = await res.json();
+            currentUrl = data.url || '';
+        }
+    } catch (e) { console.error(e); }
+
+    // 2. Show Modal with Multiple Tabs/Sections
+    const { value: formValues } = await Swal.fire({
+        title: 'Configuración del Sistema',
+        html: `
+            <div class="text-left space-y-6">
+                
+                <!-- Webhook Section -->
+                <div>
+                    <h3 class="text-blue-400 font-bold mb-2"><i class="fas fa-bell mr-2"></i>Notificaciones (Webhook)</h3>
+                    <p class="text-sm text-gray-400 mb-2">URL para recibir alertas (ej: Discord, Slack, n8n)</p>
+                    <input id="swal-input1" class="swal2-input w-full bg-slate-800 text-white border-slate-600 focus:border-blue-500" placeholder="https://discord.com/api/webhooks/..." value="${currentUrl}">
+                </div>
+
+                <hr class="border-white/10">
+
+                <!-- Backup Section -->
+                <div>
+                    <h3 class="text-emerald-400 font-bold mb-2"><i class="fas fa-save mr-2"></i>Copia de Seguridad</h3>
+                    <p class="text-sm text-gray-400 mb-3">Guarda o restaura la base de datos de dispositivos y configuraciones.</p>
+                    
+                    <div class="flex gap-3">
+                        <button onclick="backupConfig()" class="flex-1 py-2 px-4 rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 transition-all font-medium">
+                            <i class="fas fa-download mr-2"></i>Descargar Backup
+                        </button>
+                        
+                        <label class="flex-1 py-2 px-4 rounded-lg bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-500/30 transition-all font-medium text-center cursor-pointer">
+                            <i class="fas fa-upload mr-2"></i>Restaurar
+                            <input type="file" id="restoreFile" class="hidden" onchange="restoreConfig(this)">
+                        </label>
+                    </div>
+                </div>
+
+                <hr class="border-white/10">
+
+                <!-- Danger Zone -->
+                <div>
+                    <h3 class="text-red-400 font-bold mb-2"><i class="fas fa-exclamation-triangle mr-2"></i>Zona de Peligro</h3>
+                     <button onclick="confirmResetDB()" class="w-full py-2 px-4 rounded-lg bg-red-600/10 hover:bg-red-600 text-red-500 hover:text-white border border-red-500/20 transition-all font-medium">
+                        <i class="fas fa-trash-alt mr-2"></i>Borrar Base de Datos
+                    </button>
+                </div>
+
+            </div>
+        `,
+        focusConfirm: false,
+        showCancelButton: true,
+        confirmButtonText: 'Guardar Cambios',
+        cancelButtonText: 'Cerrar',
+        confirmButtonColor: '#3b82f6',
+        cancelButtonColor: '#1e293b',
+        background: '#0f172a',
+        color: '#f8fafc',
+        width: '600px',
+        preConfirm: () => {
+            return document.getElementById('swal-input1').value;
+        }
+    });
+
+    if (formValues !== undefined) {
+        // Save Webhook
+        try {
+            const res = await fetch(`${API_URL}/settings/webhook`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: formValues })
+            });
+            if (res.ok) {
+                Toast.fire({ icon: 'success', title: 'Configuración guardada' });
+            } else {
+                Toast.fire({ icon: 'error', title: 'Error al guardar' });
+            }
+        } catch (e) {
+            console.error(e);
+            Toast.fire({ icon: 'error', title: 'Error de conexión' });
+        }
+    }
+}
+
+// Helper for DB Reset
+function confirmResetDB() {
+    Swal.fire({
+        title: '¿Estás seguro?',
+        text: "Se borrarán todos los dispositivos y el historial. No se puede deshacer.",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#ef4444',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Sí, borrar todo',
+        background: '#1e293b',
+        color: '#fff'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            // Call API to reset DB (Endpoint needed or manual clear)
+            // For now, imply manual action or implement endpoint later if requested. 
+            // Since user didn't ask for this specific feature but it is good UX in settings.
+            Toast.fire({ icon: 'info', title: 'Funcionalidad en desarrollo' });
+        }
+    })
+}
+
+// --- SPEEDTEST ---
+let speedChart = null;
+
+async function fetchSpeedHistory() {
+    try {
+        const res = await fetch(`${API_URL}/speedtest/history?limit=20`);
+        const data = await res.json();
+        renderSpeedChart(data);
+    } catch (e) {
+        console.error("Error fetching speedtest history", e);
+    }
+}
+
+function renderSpeedChart(data) {
+    const ctx = document.getElementById('speedChart');
+    if (!ctx) return;
+
+    // Sort chronological (oldest -> newest) for Chart
+    data.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    const labels = data.map(d => {
+        const date = new Date(d.timestamp + "Z");
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    });
+    const download = data.map(d => d.download);
+    const upload = data.map(d => d.upload);
+    const ping = data.map(d => d.ping);
+
+    if (data.length > 0) {
+        const last = data[data.length - 1];
+        const lastDate = new Date(last.timestamp + "Z").toLocaleString();
+        const info = document.getElementById('last-speedtest');
+        if (info) info.innerText = `Último: ⬇️${last.download} ⬆️${last.upload} (${lastDate})`;
+    }
+
+    if (speedChart) speedChart.destroy();
+
+    speedChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Descarga (Mbps)',
+                    data: download,
+                    borderColor: '#3b82f6', // blue-500
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    yAxisID: 'y',
+                    tension: 0.4,
+                    fill: true
+                },
+                {
+                    label: 'Subida (Mbps)',
+                    data: upload,
+                    borderColor: '#10b981', // emerald-500
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    yAxisID: 'y',
+                    tension: 0.4,
+                    fill: true
+                },
+                {
+                    label: 'Ping (ms)',
+                    data: ping,
+                    borderColor: '#f59e0b', // amber-500
+                    borderDash: [5, 5],
+                    yAxisID: 'y1',
+                    tension: 0.1,
+                    pointStyle: 'circle'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            plugins: {
+                legend: { labels: { color: '#cbd5e1' } }
+            },
+            scales: {
+                y: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                    ticks: { color: '#94a3b8' },
+                    title: { display: true, text: 'Velocidad (Mbps)', color: '#94a3b8' }
+                },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    grid: { drawOnChartArea: false },
+                    ticks: { color: '#f59e0b' },
+                    title: { display: true, text: 'Ping (ms)', color: '#f59e0b' }
+                },
+                x: {
+                    grid: { display: false },
+                    ticks: { color: '#94a3b8' }
+                }
+            }
+        }
+    });
+}
+
+async function runSpeedtest() {
+    const btn = document.getElementById('btn-speedtest');
+    const originalText = btn.innerHTML;
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Midiendo...';
+
+    const toast = Swal.mixin({
+        toast: true,
+        position: 'top-end',
+        showConfirmButton: false,
+        timer: 3000,
+        background: '#1e293b',
+        color: '#fff'
+    });
+
+    toast.fire({
+        icon: 'info',
+        title: 'Speedtest Iniciado',
+        text: 'Esto puede tardar unos 30-40 segundos...'
+    });
+
+    try {
+        const res = await fetch(`${API_URL}/speedtest/run`, { method: 'POST' });
+        const result = await res.json();
+
+        if (result.success) {
+            Swal.fire({
+                icon: 'success',
+                title: 'Test Finalizado 🚀',
+                html: `
+                    <div class="text-left ml-10">
+                    <p><strong>Descarga:</strong> ${result.data.download} Mbps</p>
+                    <p><strong>Subida:</strong> ${result.data.upload} Mbps</p>
+                    <p><strong>Ping:</strong> ${result.data.ping} ms</p>
+                    </div>
+                `,
+                background: '#1e293b',
+                color: '#fff'
+            });
+            fetchSpeedHistory();
+        } else {
+            Swal.fire({ icon: 'error', title: 'Error', text: result.error, background: '#1e293b', color: '#fff' });
+        }
+    } catch (e) {
+        Swal.fire({ icon: 'error', title: 'Error de conexión', background: '#1e293b', color: '#fff' });
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+}
+
+// Initial fetch
+fetchSpeedHistory();
+
+// --- TOPOLOGY ---
+let network = null;
+
+async function fetchTopology() {
+    try {
+        const res = await fetch(`${API_URL}/topology`);
+        const data = await res.json();
+        renderTopology(data);
+    } catch (e) {
+        console.error("Error fetching topology", e);
+    }
+}
+
+function renderTopology(data) {
+    const container = document.getElementById('mynetwork');
+    if (!container) return;
+
+    // Convert generic data to vis format
+    const nodes = new vis.DataSet(data.nodes);
+    const edges = new vis.DataSet(data.edges);
+
+    const options = {
+        nodes: {
+            shape: 'dot',
+            size: 20,
+            font: { size: 14, color: '#e2e8f0', face: 'ui-sans-serif' },
+            borderWidth: 2,
+            shadow: true
+        },
+        edges: {
+            width: 2,
+            color: { color: '#475569', highlight: '#3b82f6', opacity: 0.5 },
+            smooth: { type: 'continuous' },
+            length: 150
+        },
+        groups: {
+            gateway: {
+                color: { background: '#f59e0b', border: '#b45309' },
+                shape: 'diamond',
+                size: 35,
+                font: { size: 16, color: '#f59e0b', face: 'bold' }
+            },
+            server: {
+                color: { background: '#6366f1', border: '#4338ca' },
+                shape: 'square',
+                size: 25
+            },
+            trusted: { color: { background: '#10b981', border: '#047857' } },
+            intruder: { color: { background: '#ef4444', border: '#b91c1c' }, shape: 'triangle' },
+            blocked: {
+                color: { background: '#1e293b', border: '#ef4444' },
+                shape: 'icon',
+                icon: { face: "'Font Awesome 6 Free'", code: '\uf023', size: 30, color: '#ef4444' }
+            },
+            device: { color: { background: '#3b82f6', border: '#1d4ed8' } }
+        },
+        physics: {
+            stabilization: false,
+            barnesHut: {
+                gravitationalConstant: -4000,
+                springConstant: 0.02,
+                springLength: 150
+            }
+        },
+        interaction: { hover: true, tooltipDelay: 200, zoomView: true }
+    };
+
+    if (network) network.destroy();
+    network = new vis.Network(container, { nodes, edges }, options);
+}
+
+// Initial fetch
+fetchTopology();
+
 

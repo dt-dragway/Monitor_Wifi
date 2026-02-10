@@ -9,14 +9,18 @@ import asyncio
 from typing import List
 
 from backend.database import create_db_and_tables, get_session, engine
-from backend.models import Device
+from backend.models import Device, EventLog, Settings, SpeedTestResult
 from backend.service import update_network_status
 from backend.nmap_scanner import scan_device_details, scan_vulnerabilities
 from backend.mitm_detector import mitm_detector
 from backend.blocker import blocker
 from backend.jail import jailer
+from backend.traffic_analyzer import start_sniffer_thread, get_traffic_stats
+from backend.speedtest_monitor import run_speedtest
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+
+# Variable global para controlar el hilo
 
 # Variable global para controlar el hilo
 scanning_active = True
@@ -41,6 +45,19 @@ async def lifespan(app: FastAPI):
     # Iniciar módulos de seguridad
     blocker.start()
     jailer.start()
+    start_sniffer_thread() # Traffic Analyzer (Phase 21)
+
+    # SCHEDULER: Speedtest cada 4 horas
+    def speedtest_scheduler():
+        while scanning_active:
+            time.sleep(14400) # 4 horas
+            try:
+                run_speedtest()
+            except Exception as e:
+                print(f"Error scheduled speedtest: {e}")
+
+    t_st = threading.Thread(target=speedtest_scheduler, daemon=True)
+    t_st.start()
 
     # RESTAURAR ESTADO DE BLOQUEO (Persistencia)
     print("♻️ Restaurando reglas de bloqueo desde base de datos...")
@@ -199,12 +216,17 @@ def warn_device(ip: str, session: Session = Depends(get_session)):
     statement = select(Device).where(Device.ip == ip)
     device = session.exec(statement).first()
     
+    mac = None
     if device:
+        mac = device.mac
         blocker.block_device(device.mac)
         # PERSISTENCE: Save to DB
         device.is_blocked = True
         session.add(device)
         session.commit()
+    
+    from backend.logger import log_event
+    log_event("DANGER", f"Protocolo de Expulsión ACTIVADO para {ip}", mac)
         
     return {"success": True, "status": "jailed", "ip": ip}
 
@@ -217,12 +239,17 @@ def unwarn_device(ip: str, session: Session = Depends(get_session)):
     statement = select(Device).where(Device.ip == ip)
     device = session.exec(statement).first()
     
+    mac = None
     if device:
+        mac = device.mac
         blocker.unblock_device(device.mac)
         # PERSISTENCE: Save to DB
         device.is_blocked = False
         session.add(device)
         session.commit()
+
+    from backend.logger import log_event
+    log_event("INFO", f"Protocolo de Expulsión DESACTIVADO para {ip}", mac)
 
     return {"success": True, "status": "released", "ip": ip}
 
@@ -264,7 +291,100 @@ def import_backup(data: dict, session: Session = Depends(get_session)):
             count += 1
         
         session.commit()
+        from backend.logger import log_event
+        log_event("SYSTEM", f"Restauración de Backup completada ({count} dispositivos).")
         return {"success": True, "count": count}
     except Exception as e:
         print(f"Error importando backup: {e}")
         return {"success": False, "error": str(e)}
+
+from backend.models import Device, EventLog, Settings
+
+# ... (imports)
+
+@app.get("/api/events")
+def get_events(limit: int = 50, session: Session = Depends(get_session)):
+    events = session.exec(select(EventLog).order_by(EventLog.timestamp.desc()).limit(limit)).all()
+    return events
+
+@app.get("/api/settings/webhook")
+def get_webhook(session: Session = Depends(get_session)):
+    setting = session.get(Settings, "webhook_url")
+    return {"url": setting.value if setting else ""}
+
+@app.post("/api/settings/webhook")
+def set_webhook(data: dict, session: Session = Depends(get_session)):
+    url = data.get("url", "")
+    setting = session.get(Settings, "webhook_url")
+    if not setting:
+        setting = Settings(key="webhook_url", value=url)
+    else:
+        setting.value = url
+    session.add(setting)
+    session.commit()
+    
+    # Test notification
+    if url:
+        from backend.notifier import send_notification
+        send_notification("Webhook configurado correctamente.", "INFO")
+        
+    
+    return {"success": True}
+
+@app.get("/api/speedtest/history")
+def get_speedtest_history(limit: int = 10, session: Session = Depends(get_session)):
+    results = session.exec(select(SpeedTestResult).order_by(SpeedTestResult.timestamp.desc()).limit(limit)).all()
+    return results
+
+@app.post("/api/speedtest/run")
+async def trigger_speedtest():
+    loop = asyncio.get_event_loop()
+    # Ejecutar en hilo para no bloquear
+    with ThreadPoolExecutor() as pool:
+        result = await loop.run_in_executor(pool, run_speedtest)
+    
+    if result:
+        return {"success": True, "data": result}
+    return {"success": False, "error": "Failed to run speedtest"}
+
+@app.get("/api/traffic")
+def read_traffic_stats():
+    return get_traffic_stats()
+
+@app.get("/api/topology")
+def get_topology(session: Session = Depends(get_session)):
+    devices = session.exec(select(Device).where(Device.status == "online")).all()
+    
+    nodes = []
+    edges = []
+    
+    # Gateway Node
+    nodes.append({"id": "gateway", "label": "Gateway\n(Internet)", "group": "gateway", "value": 10})
+    
+    # Monitor Node
+    nodes.append({"id": "monitor", "label": "Monitor Pro", "group": "server", "value": 8})
+    edges.append({"from": "monitor", "to": "gateway"})
+    
+    for d in devices:
+        group = "device"
+        val = 5
+        if d.is_blocked: 
+            group = "blocked"
+            val = 3
+        elif not d.is_trusted: 
+            group = "intruder"
+            val = 6
+        elif d.is_trusted: 
+            group = "trusted"
+
+        label = d.alias or d.vendor or d.ip
+        nodes.append({
+            "id": d.mac,
+            "label": f"{label}\n({d.ip})",
+            "group": group,
+            "value": val,
+            "title": f"MAC: {d.mac}\nVendor: {d.vendor}"
+        })
+        edges.append({"from": d.mac, "to": "gateway"})
+        
+    return {"nodes": nodes, "edges": edges}
