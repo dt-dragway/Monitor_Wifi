@@ -10,4 +10,13 @@ class Device(SQLModel, table=True):
     is_trusted: bool = Field(default=False)
     first_seen: datetime = Field(default_factory=datetime.utcnow)
     last_seen: datetime = Field(default_factory=datetime.utcnow)
-    status: str = Field(default="offline") # online, offline, blocked
+    status: str = Field(default="offline") # online, offline
+    is_blocked: bool = Field(default=False)
+    interface: Optional[str] = None # wlan0, eno1, etc
+
+class EventLog(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    event_type: str # INFO, WARNING, DANGER, SYSTEM
+    message: str
+    device_mac: Optional[str] = None

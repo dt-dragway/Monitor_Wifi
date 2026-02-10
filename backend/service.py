@@ -78,6 +78,7 @@ def update_network_status():
                 existing_device.ip = ip
                 existing_device.last_seen = datetime.utcnow()
                 existing_device.status = "online"
+                existing_device.interface = d.get('interface') # Actualizar interfaz si cambia
                 
                 # Actualizar vendor si falta
                 if not existing_device.vendor or existing_device.vendor == "Desconocido":
@@ -97,6 +98,8 @@ def update_network_status():
             else:
                 # Nuevo dispositivo
                 vendor = get_vendor(mac)
+                interface = d.get('interface') # Obtener interfaz
+                
                 if d.get('is_local'):
                      alias = "💻 ESTE SERVIDOR (TÚ)"
                 else:
@@ -105,9 +108,9 @@ def update_network_status():
                 
                 is_trusted = True if d.get('is_local') else False
                 
-                new_device = Device(mac=mac, ip=ip, vendor=vendor, alias=alias, status="online", is_trusted=is_trusted)
+                new_device = Device(mac=mac, ip=ip, vendor=vendor, alias=alias, status="online", is_trusted=is_trusted, interface=interface)
                 session.add(new_device)
-                print(f"Nuevo dispositivo detectado: {ip} ({mac}) - {vendor} / {alias}")
+                print(f"Nuevo dispositivo detectado: {ip} ({mac}) - {vendor} / {alias} [{interface}]")
 
         # 2. Manejar dispositivos que ya no están (Offline)
         # Buscar dispositivos que estaban online pero NO están en active_macs
@@ -117,9 +120,9 @@ def update_network_status():
         for device in online_devices:
             if device.mac not in active_macs:
                 # Si no respondió, dar margen de tolerancia (Grace Period)
-                # Escaneo es cada 30s. Damos 2 minutos (4 escaneos) antes de marcar offline.
+                # Escaneo es cada 30s. Damos 5 minutos antes de marcar offline.
                 # Esto evita parpadeos si un dispositivo no responde un ARP puntual.
-                GRACE_PERIOD = 120 # segundos
+                GRACE_PERIOD = 300 # segundos (5 min)
                 
                 if device.last_seen:
                     time_diff = (datetime.utcnow() - device.last_seen).total_seconds()

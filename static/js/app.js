@@ -200,9 +200,18 @@ function renderDevices(devices) {
                 '<span class="px-2 py-0.5 rounded-full text-xs bg-gray-700 text-gray-400 font-mono">OFFLINE</span>'
                 : ''}
                     </div>
-                    <div class="text-xs text-gray-400 mt-1 font-mono flex gap-4">
-                        <span><i class="fas fa-ethernet"></i> ${device.ip}</span>
-                        <span><i class="fas fa-fingerprint"></i> ${device.mac}</span>
+                    </div>
+                    <div class="text-xs text-gray-400 mt-1 font-mono flex flex-wrap gap-4 items-center">
+                        <span title="IP Address"><i class="fas fa-ethernet"></i> ${device.ip}</span>
+                        <span title="MAC Address"><i class="fas fa-fingerprint"></i> ${device.mac}</span>
+                        ${device.interface ? `
+                            <span class="px-1.5 py-0.5 rounded bg-gray-700/50 border border-gray-600/50 text-gray-300" title="Interfaz de Conexión">
+                                ${device.interface.startsWith('wlan') || device.interface.startsWith('wifi') ? '<i class="fas fa-wifi text-blue-400"></i>' :
+                    device.interface.startsWith('eth') || device.interface.startsWith('en') ? '<i class="fas fa-network-wired text-green-400"></i>' :
+                        '<i class="fas fa-server text-purple-400"></i>'} 
+                                ${device.interface}
+                            </span>
+                        ` : ''}
                     </div>
                 </div>
             </div>
@@ -229,8 +238,16 @@ function renderDevices(devices) {
                     </button>
                 `}
                 
-                <button onclick="editAlias('${device.mac}', '${device.alias || ''}')" class="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white transition-all border border-blue-500/30">
+                <button onclick="editAlias('${device.mac}', '${device.alias || ''}')" class="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white transition-all border border-blue-500/30" title="Editar Nombre">
                     <i class="fas fa-pen"></i>
+                </button>
+                
+                <button onclick="triggerDeepScan('${device.ip}')" class="p-2 rounded-lg bg-purple-600/20 hover:bg-purple-600 text-purple-400 hover:text-white transition-all border border-purple-500/30" title="Escaneo Profundo (Nmap)">
+                    <i class="fas fa-microscope"></i>
+                </button>
+
+                <button onclick="triggerAudit('${device.ip}')" class="p-2 rounded-lg bg-pink-600/20 hover:bg-pink-600 text-pink-400 hover:text-white transition-all border border-pink-500/30" title="Auditoría de Seguridad (Vulns)">
+                    <i class="fas fa-bug"></i>
                 </button>
             </div>
         `;
@@ -643,5 +660,68 @@ async function unwarnDevice(ip) {
     }
 }
 
+
+// --- BACKUP / RESTORE ---
+async function backupConfig() {
+    window.open(`${API_URL}/backup`, '_blank');
+}
+
+window.restoreConfig = async function (input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async function (e) {
+        try {
+            const json = JSON.parse(e.target.result);
+
+            Swal.fire({
+                title: 'Restaurando...',
+                text: 'Procesando archivo de configuración',
+                allowOutsideClick: false,
+                didOpen: () => Swal.showLoading()
+            });
+
+            const response = await fetch(`${API_URL}/backup`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(json)
+            });
+
+            const result = await response.json();
+
+            if (result.success) {
+                await Swal.fire({
+                    icon: 'success',
+                    title: 'Restauración Exitosa',
+                    text: `Se han importado/actualizado ${result.count} dispositivos.`,
+                    background: '#1e293b',
+                    color: '#fff'
+                });
+                fetchDevices(); // Refresh list
+            } else {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Error',
+                    text: result.error,
+                    background: '#1e293b',
+                    color: '#fff'
+                });
+            }
+        } catch (err) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Archivo Inválido',
+                text: 'El archivo de respaldo está corrupto o no es JSON válido.',
+                background: '#1e293b',
+                color: '#fff'
+            });
+        }
+    };
+    reader.readAsText(file);
+    input.value = ''; // Reset input to allow re-upload same file
+}
+
 setInterval(fetchJailedDevices, 5000);
 fetchJailedDevices();
+
