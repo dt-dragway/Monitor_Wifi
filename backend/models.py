@@ -39,3 +39,13 @@ class TrafficLog(SQLModel, table=True):
     device_mac: str
     bytes_down: int
     bytes_up: int
+
+class IntruderLog(SQLModel, table=True):
+    """Registro de intrusos detectados"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    device_mac: str
+    device_ip: str
+    vendor: Optional[str] = None
+    alias: Optional[str] = None
+    detection_type: str # "new_device" o "reconnection"

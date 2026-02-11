@@ -172,6 +172,47 @@ class Jailer:
                 os.system(f"iptables -I FORWARD -s {ip} -p udp --dport 443 -j REJECT")
 
                 self._send_arp_burst(ip, mac)
+                
+                # 🚨 NOTIFICACIÓN DE DISPOSITIVO ENCARCELADO
+                self._notify_jailed(ip, mac)
+    
+    def _notify_jailed(self, ip, mac):
+        """Envía notificación cuando un dispositivo es encarcelado"""
+        try:
+            # Importar aquí para evitar dependencias circulares
+            from backend.notifier import send_desktop_notification
+            from backend.database import engine
+            from backend.models import Device
+            from sqlmodel import Session, select
+            
+            # Obtener información del dispositivo desde la BD
+            device_name = "Dispositivo Desconocido"
+            vendor = "Desconocido"
+            
+            if mac:
+                with Session(engine) as session:
+                    statement = select(Device).where(Device.mac == mac)
+                    device = session.exec(statement).first()
+                    if device:
+                        device_name = device.alias or device.vendor or "Dispositivo Desconocido"
+                        vendor = device.vendor or "Desconocido"
+            
+            # Enviar notificación de escritorio
+            title = "🚔 DISPOSITIVO ENCARCELADO"
+            message = f"{device_name}\nIP: {ip}\nMAC: {mac or 'N/A'}\n\n⚠️ Redirigido a página cautiva"
+            
+            send_desktop_notification(
+                title=title,
+                message=message,
+                urgency="critical",
+                icon="security-medium"
+            )
+            
+            print(f"✅ Notificación de Jail enviada para {ip}")
+            
+        except Exception as e:
+            print(f"⚠️ Error enviando notificación de Jail: {e}")
+
 
     def release_prisoner(self, ip):
         with self.lock:

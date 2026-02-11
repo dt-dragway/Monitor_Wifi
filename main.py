@@ -9,7 +9,7 @@ import asyncio
 from typing import List
 
 from backend.database import create_db_and_tables, get_session, engine
-from backend.models import Device, EventLog, Settings, SpeedTestResult
+from backend.models import Device, EventLog, Settings, SpeedTestResult, IntruderLog
 from backend.service import update_network_status
 from backend.nmap_scanner import scan_device_details, scan_vulnerabilities
 from backend.mitm_detector import mitm_detector
@@ -318,7 +318,11 @@ def get_traffic_history(mac: str, period: str = "24h", session: Session = Depend
     return logs
 
 @app.get("/api/events")
-def get_events(limit: int = 50, session: Session = Depends(get_session)):
+def get_events(limit: int = 7, session: Session = Depends(get_session)):
+    """
+    Retorna los eventos recientes (log de actividad).
+    Por defecto muestra las últimas 7 notificaciones.
+    """
     events = session.exec(select(EventLog).order_by(EventLog.timestamp.desc()).limit(limit)).all()
     return events
 
@@ -429,3 +433,16 @@ def get_topology(session: Session = Depends(get_session)):
         edges.append({"from": d.mac, "to": "gateway"})
         
     return {"nodes": nodes, "edges": edges}
+
+@app.get("/api/intruders")
+def get_intruders(limit: int = 50, session: Session = Depends(get_session)):
+    """
+    Retorna el registro de intrusos detectados.
+    Por defecto muestra los últimos 50 registros.
+    """
+    intruders = session.exec(
+        select(IntruderLog)
+        .order_by(IntruderLog.timestamp.desc())
+        .limit(limit)
+    ).all()
+    return intruders

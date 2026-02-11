@@ -1312,7 +1312,7 @@ async function fetchRecentActivity() {
     if (!container) return;
 
     try {
-        const res = await fetch(`${API_URL}/events?limit=20`);
+        const res = await fetch(`${API_URL}/events?limit=7`);
         if (!res.ok) return;
         const events = await res.json();
 
@@ -1534,6 +1534,24 @@ function renderSpeedChart(data) {
     const ctx = document.getElementById('speedChart');
     if (!ctx) return;
 
+    // Si no hay datos, mostrar mensaje
+    if (!data || data.length === 0) {
+        const container = ctx.parentElement;
+        if (container) {
+            container.innerHTML = `
+                <div class="flex flex-col items-center justify-center h-full text-slate-400">
+                    <i class="fas fa-chart-line text-6xl mb-4 opacity-20"></i>
+                    <p class="text-lg font-medium">No hay datos de velocidad</p>
+                    <p class="text-sm mt-2">Ejecuta un test de velocidad para ver el historial</p>
+                    <button onclick="runSpeedtest()" class="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
+                        <i class="fas fa-tachometer-alt mr-2"></i>Ejecutar Test
+                    </button>
+                </div>
+            `;
+        }
+        return;
+    }
+
     // Sort chronological (oldest -> newest) for Chart
     data.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
@@ -1548,8 +1566,24 @@ function renderSpeedChart(data) {
     if (data.length > 0) {
         const last = data[data.length - 1];
         const lastDate = new Date(last.timestamp + "Z").toLocaleString();
+
+        // Actualizar dashboard
         const info = document.getElementById('last-speedtest');
-        if (info) info.innerText = `Último: ⬇️${last.download} ⬆️${last.upload} (${lastDate})`;
+        if (info) info.innerText = `Último: ⬇️${last.download} Mb/s ⬆️${last.upload} Mb/s 📶${last.ping}ms (${lastDate})`;
+
+        // Actualizar página de velocidad
+        const infoLg = document.getElementById('last-speedtest-lg');
+        if (infoLg) {
+            infoLg.innerText = `⬇️${last.download} Mb/s ⬆️${last.upload} Mb/s 📶${last.ping}ms`;
+            infoLg.className = 'text-lg text-yellow-400 font-mono font-bold';
+        }
+    } else {
+        // Si no hay datos, actualizar el texto
+        const infoLg = document.getElementById('last-speedtest-lg');
+        if (infoLg) {
+            infoLg.innerText = 'No hay datos';
+            infoLg.className = 'text-lg text-slate-400 font-mono';
+        }
     }
 
     if (speedChart) speedChart.destroy();

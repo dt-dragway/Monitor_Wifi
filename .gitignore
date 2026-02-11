@@ -1,0 +1,61 @@
+# Base de datos (información personal)
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-shm
+*.db-wal
+devices.db
+devices.db-journal
+
+# Entorno virtual de Python
+venv/
+env/
+ENV/
+.venv/
+
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Configuraciones personales
+.env
+.env.local
+config.local.json
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Archivos temporales
+tmp/
+temp/
+*.tmp
+
+# Certificados y claves
+*.pem
+*.key
+*.crt
+*.cer
+
+# Backups
+*.bak
+*.backup
+backup/

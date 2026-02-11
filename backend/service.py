@@ -1,5 +1,5 @@
 from sqlmodel import Session, select
-from .models import Device
+from .models import Device, IntruderLog
 from .scanner import scan_network
 from .database import engine
 from mac_vendor_lookup import MacLookup
@@ -75,6 +75,10 @@ def update_network_status():
             existing_device = results.first()
             
             if existing_device:
+                # Verificar si era un intruso offline que se reconectó
+                was_offline = existing_device.status == "offline"
+                is_intruder = not existing_device.is_trusted
+                
                 existing_device.ip = ip
                 existing_device.last_seen = datetime.utcnow()
                 existing_device.status = "online"
@@ -95,6 +99,27 @@ def update_network_status():
                              existing_device.alias = hostname
 
                 session.add(existing_device)
+                
+                # 🚨 NOTIFICAR SI UN INTRUSO SE RECONECTÓ
+                if was_offline and is_intruder:
+                    from .notifier import notify_intruder
+                    notify_intruder({
+                        'mac': mac,
+                        'ip': ip,
+                        'vendor': existing_device.vendor,
+                        'alias': existing_device.alias
+                    })
+                    
+                    # 📝 REGISTRAR INTRUSO EN BD
+                    intruder_log = IntruderLog(
+                        device_mac=mac,
+                        device_ip=ip,
+                        vendor=existing_device.vendor,
+                        alias=existing_device.alias,
+                        detection_type="reconnection"
+                    )
+                    session.add(intruder_log)
+
             else:
                 # Nuevo dispositivo
                 vendor = get_vendor(mac)
@@ -113,6 +138,27 @@ def update_network_status():
                 print(f"Nuevo dispositivo detectado: {ip} ({mac}) - {vendor} / {alias} [{interface}]")
                 from .logger import log_event
                 log_event("INFO", f"Nuevo dispositivo detectado: {vendor} ({ip})", mac)
+                
+                # 🚨 NOTIFICAR SI ES UN INTRUSO (no confiable)
+                if not is_trusted:
+                    from .notifier import notify_intruder
+                    notify_intruder({
+                        'mac': mac,
+                        'ip': ip,
+                        'vendor': vendor,
+                        'alias': alias
+                    })
+                    
+                    # 📝 REGISTRAR INTRUSO EN BD
+                    intruder_log = IntruderLog(
+                        device_mac=mac,
+                        device_ip=ip,
+                        vendor=vendor,
+                        alias=alias,
+                        detection_type="new_device"
+                    )
+                    session.add(intruder_log)
+
 
         # 2. Manejar dispositivos que ya no están (Offline)
         # Buscar dispositivos que estaban online pero NO están en active_macs
