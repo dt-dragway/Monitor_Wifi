@@ -140,6 +140,30 @@ function formatBytes(bytes, decimals = 2) {
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
 }
 
+// Nueva función para calcular tiempo offline
+function getOfflineTime(lastSeenStr) {
+    if (!lastSeenStr) return '';
+
+    try {
+        const lastSeen = new Date(lastSeenStr + (lastSeenStr.includes('Z') ? '' : 'Z'));
+        const now = new Date();
+        const diffMs = now - lastSeen;
+        const diffMinutes = Math.floor(diffMs / 60000);
+
+        if (diffMinutes < 60) {
+            return `${diffMinutes} min`;
+        } else if (diffMinutes < 1440) { // menos de 24 horas
+            const hours = Math.floor(diffMinutes / 60);
+            return `${hours}h`;
+        } else {
+            const days = Math.floor(diffMinutes / 1440);
+            const hours = Math.floor((diffMinutes % 1440) / 60);
+            return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+        }
+    } catch (e) {
+        return '';
+    }
+}
 
 
 
@@ -543,7 +567,7 @@ function renderDevices(devices) {
                         <h3 class="font-bold text-base text-slate-100 group-hover:text-blue-300 transition-colors">${device.alias || device.vendor || 'Dispositivo Desconocido'}</h3>
                         ${isBlocked ? '<span class="px-1.5 py-0.5 rounded text-[10px] bg-red-900/40 text-red-400 border border-red-800/50 font-bold uppercase tracking-wider">Bloqueado</span>' : ''}
                         ${!isTrusted && isOnline && !isBlocked ? '<span class="px-1.5 py-0.5 rounded text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 font-bold uppercase tracking-wider animate-pulse">Intruso</span>' : ''}
-                        ${!isOnline ? '<span class="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-500 font-mono uppercase">Offline</span>' : ''}
+                        ${!isOnline ? `<span class="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-500 font-mono uppercase">Offline ${getOfflineTime(device.last_seen) ? '· ' + getOfflineTime(device.last_seen) : ''}</span>` : ''}
                     </div>
                     <div class="text-xs text-slate-500 mt-1 font-mono flex flex-wrap gap-3 items-center">
                         <span title="IP Address" class="hover:text-slate-300 cursor-help transition-colors"><i class="fas fa-ethernet mr-1.5"></i>${device.ip}</span>

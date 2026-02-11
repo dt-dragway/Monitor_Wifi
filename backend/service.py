@@ -122,9 +122,9 @@ def update_network_status():
         for device in online_devices:
             if device.mac not in active_macs:
                 # Si no respondió, dar margen de tolerancia (Grace Period)
-                # Escaneo es cada 30s. Damos 5 minutos antes de marcar offline.
+                # Escaneo es cada 30s. Damos 3 minutos antes de marcar offline.
                 # Esto evita parpadeos si un dispositivo no responde un ARP puntual.
-                GRACE_PERIOD = 300 # segundos (5 min)
+                GRACE_PERIOD = 180 # segundos (3 min)
                 
                 if device.last_seen:
                     time_diff = (datetime.utcnow() - device.last_seen).total_seconds()
