@@ -17,10 +17,7 @@ from backend.blocker import blocker
 from backend.jail import jailer
 from backend.traffic_analyzer import start_sniffer_thread, get_traffic_stats
 from backend.speedtest_monitor import run_speedtest
-import asyncio
 from concurrent.futures import ThreadPoolExecutor
-
-# Variable global para controlar el hilo
 
 # Variable global para controlar el hilo
 scanning_active = True
@@ -298,14 +295,58 @@ def import_backup(data: dict, session: Session = Depends(get_session)):
         print(f"Error importando backup: {e}")
         return {"success": False, "error": str(e)}
 
-from backend.models import Device, EventLog, Settings
+from backend.models import Device, EventLog, Settings, TrafficLog
+from datetime import datetime, timedelta
 
-# ... (imports)
+@app.get("/api/traffic/history/{mac}")
+def get_traffic_history(mac: str, period: str = "24h", session: Session = Depends(get_session)):
+    query = select(TrafficLog).where(TrafficLog.device_mac == mac).order_by(TrafficLog.timestamp.asc())
+    
+    now = datetime.utcnow()
+    cutoff = None
+    
+    if period == "24h": cutoff = now - timedelta(hours=24)
+    if period == "7d": cutoff = now - timedelta(days=7)
+    if period == "30d": cutoff = now - timedelta(days=30)
+    if period == "365d": cutoff = now - timedelta(days=365)
+    # period == "all" implies no cutoff
+    
+    if cutoff:
+        query = query.where(TrafficLog.timestamp >= cutoff)
+        
+    logs = session.exec(query).all()
+    return logs
 
 @app.get("/api/events")
 def get_events(limit: int = 50, session: Session = Depends(get_session)):
     events = session.exec(select(EventLog).order_by(EventLog.timestamp.desc()).limit(limit)).all()
     return events
+
+@app.get("/api/traffic/monthly")
+def get_monthly_traffic(session: Session = Depends(get_session)):
+    """
+    Returns total traffic per device for the current month.
+    Used for Top Talkers chart.
+    """
+    now = datetime.utcnow()
+    # First day of month
+    start_of_month = datetime(now.year, now.month, 1)
+    
+    # Query all logs since start of month
+    # Efficient aggregation would be better in SQL, but SQLModel/SQLite support varies.
+    # We'll fetch and sum in Python for simplicity and compatibility.
+    query = select(TrafficLog).where(TrafficLog.timestamp >= start_of_month)
+    logs = session.exec(query).all()
+    
+    # Aggregate
+    stats = {}
+    for log in logs:
+        if log.device_mac not in stats:
+            stats[log.device_mac] = {'down': 0, 'up': 0}
+        stats[log.device_mac]['down'] += log.bytes_down
+        stats[log.device_mac]['up'] += log.bytes_up
+        
+    return stats
 
 @app.get("/api/settings/webhook")
 def get_webhook(session: Session = Depends(get_session)):

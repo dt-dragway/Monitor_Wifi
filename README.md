@@ -11,16 +11,28 @@ Un sistema avanzado de vigilancia y monitoreo de red local, diseñado con una in
 - Animaciones suaves y transiciones fluidas.
 - Iconos dinámicos que se adaptan al tipo de dispositivo (Windows, Apple, Android, SmartTV, Consolas, etc.).
 
-### 🔍 Escaneo Inteligente
-- **Detección ARP:** Utiliza el protocolo ARP para descubrir todos los dispositivos conectados en tu red local (LAN/WLAN) de forma fiable.
-- **Identificación de Fabricante:** Muestra el fabricante del dispositivo (Vendor) basado en su dirección MAC.
-- **Resolución de Hostname:** Intenta obtener el nombre del equipo (NetBIOS/DNS) para identificar fácilmente PCs Windows y servidores (ej: `DESKTOP-J8K2L`).
+### � Análisis de Tráfico en Tiempo Real
+- **Monitor de Ancho de Banda:** Visualiza el consumo de subida y bajada de cada dispositivo en tiempo real (KB/MB).
+- **Historial Detallado:** Gráficos interactivos de consumo por dispositivo (24h, 7 días, 30 días, 1 año).
+- **Top Talkers:** Identifica rápidamente quién está consumiendo más ancho de banda en tu red.
 
-### 🛡️ Gestión de Seguridad
-- **Clasificación de Confianza:** Marca tus dispositivos conocidos en **Verde** y recibe alertas visuales claras (**Rojo**) para nuevos dispositivos desconocidos.
-- **Alias Personalizados:** Asigna nombres amigables a tus dispositivos (ej: "iPhone de María", "TV Sala").
-- **Alertas Profesionales:** Sistema de notificaciones moderno (SweetAlert2) para confirmar acciones y mostrar estados.
-- **Historial Persistente:** Base de datos local (`devices.db`) que recuerda tus preferencias y configuraciones.
+### 🚀 Test de Velocidad Integrado
+- Ejecuta pruebas de velocidad de internet (Ping, Bajada, Subida) directamente desde el dashboard.
+- Guarda un historial de resultados para monitorear la calidad de tu conexión ISP.
+
+### 🛡️ Seguridad Avanzada
+- **Bloqueo de Intrusos:** Expulsa dispositivos no deseados de tu red mediante técnicas de desautenticación (requiere tarjeta compatible).
+- **Escaneo de Vulnerabilidades:** Detecta puertos abiertos y servicios corriendo en los dispositivos conectados.
+- **Alertas de Intruso:** Notificación visual inmediata y contadores de dispositivos desconocidos.
+
+### 🗺️ Mapa de Red (Topología)
+- Visualización gráfica de la red con nodos interactivos.
+- Muestra la relación entre el gateway y los dispositivos conectados.
+
+### 🎨 Experiencia de Usuario Premium
+- **Persistencia de Vista:** El sistema recuerda en qué pestaña estabas (Mapa, Velocidad, Dispositivos) incluso si recargas la página.
+- **Cero Saltos:** Actualización de datos en tiempo real sin recargar la página ni perder la posición de scroll.
+- **Diseño Glassmorphism:** Interfaz oscura, moderna y responsiva.
 
 ## 🛠️ Instalación y Uso
 
@@ -57,4 +69,4 @@ Un sistema avanzado de vigilancia y monitoreo de red local, diseñado con una in
 Este software está diseñado para uso educativo y personal en redes propias. El escaneo de redes ajenas sin autorización puede ser ilegal. El desarrollador no se hace responsable del mal uso de esta herramienta.
 
 ---
-Desarrollado con ❤️ por [Tu Nombre/Alias]
+Desarrollado con ❤️ por DragwayDt

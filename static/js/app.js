@@ -61,11 +61,55 @@ let trafficStats = {}; // Global store for traffic
 let currentView = 'dashboard';
 
 // --- TRAFFIC STATS ---
+let lastTotalBytes = 0;
+let lastTrafficTime = 0;
+let lastDeviceBytes = {};
+let deviceSpeeds = {};
+
 async function fetchTrafficStats() {
     try {
         const res = await fetch(`${API_URL}/traffic`);
         if (res.ok) {
             trafficStats = await res.json();
+
+            // --- REAL-TIME NETWORK SPEED CALCULATION ---
+            const now = Date.now();
+            let currentTotalBytes = 0;
+            const timeDiff = (now - lastTrafficTime) / 1000; // seconds
+
+            // Calculate per-device and global total
+            Object.entries(trafficStats).forEach(([mac, s]) => {
+                const total = (s.down || 0) + (s.up || 0);
+                currentTotalBytes += total;
+
+                // Per-Device Speed Calculation
+                const macLower = mac.toLowerCase();
+                const lastBytes = lastDeviceBytes[macLower]; // undefined on first run
+
+                if (lastTrafficTime > 0 && lastBytes !== undefined) {
+                    const diff = total - lastBytes;
+                    if (diff >= 0 && timeDiff > 0) {
+                        const mbps = ((diff * 8) / 1000000) / timeDiff;
+                        deviceSpeeds[macLower] = mbps;
+                    }
+                }
+                lastDeviceBytes[macLower] = total;
+            });
+
+            // Global Speed Calculation
+            if (lastTrafficTime > 0 && lastTotalBytes > 0) {
+                const bytesDiff = currentTotalBytes - lastTotalBytes;
+
+                if (timeDiff > 0 && bytesDiff >= 0) {
+                    const mbps = ((bytesDiff * 8) / 1000000) / timeDiff;
+                    const speedEl = document.getElementById('dashboard-speed');
+                    if (speedEl) speedEl.innerText = mbps.toFixed(2);
+                }
+            }
+
+            lastTotalBytes = currentTotalBytes;
+            lastTrafficTime = now;
+
             // Re-render only if current view depends on it
             if (currentView === 'dashboard') updateDashboardData(allDevices);
             if (currentView === 'devices') renderDevices(allDevices);
@@ -73,12 +117,37 @@ async function fetchTrafficStats() {
     } catch (e) { console.error("Traffic fetch error", e); }
 }
 
-// Start polling for traffic
-setInterval(fetchTrafficStats, 2000);
+// Monitoring Loop
+setInterval(() => {
+    fetchTrafficStats();
+    if (currentView === 'dashboard') fetchRecentActivity();
+}, 1000);
 fetchTrafficStats();
+fetchRecentActivity();
 
-// --- VIEW MANAGEMENT (Phase 23) ---
+// Helper for bytes (Modified to prefer KB over B)
+function formatBytes(bytes, decimals = 2) {
+    if (!+bytes) return '0 KB';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+    let i = Math.floor(Math.log(bytes) / Math.log(k));
+
+    // User request: "no me lo represente en b si no en kb"
+    // Force at least KB (index 1) unless it's literally 0 (handled above)
+    if (i < 1) i = 1;
+
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+}
+
+
+
+
+// --- VIEW MANAGEMENT (Phase 24: Persistence) ---
 function switchView(viewName) {
+    // Save state
+    localStorage.setItem('currentView', viewName);
+
     // Hide all views
     document.querySelectorAll('.view-section').forEach(el => el.classList.add('hidden'));
 
@@ -120,69 +189,209 @@ function switchView(viewName) {
     if (viewName === 'devices') renderDevices(allDevices);
 }
 
-// Ensure defaults
+// Ensure defaults with persistence
 window.addEventListener('load', () => {
-    switchView('dashboard');
+    const savedView = localStorage.getItem('currentView') || 'dashboard';
+    switchView(savedView);
 });
 
 // Create Global updateStats function with Top Talkers
+window.updateDashboardData = function (devices) {
+    window.updateStats(devices);
+};
+// Store monthly stats
+window.monthlyStats = {};
+
+async function fetchMonthlyStats() {
+    try {
+        const res = await fetch(`${API_URL}/traffic/monthly`);
+        if (res.ok) {
+            window.monthlyStats = await res.json();
+            // Trigger UI update if on dashboard
+            if (currentView === 'dashboard') updateDashboardData(allDevices);
+        }
+    } catch (e) {
+        console.error("Monthly stats error", e);
+    }
+}
+
+// Poll monthly stats frequent enough to feel "real-time" (User Request)
+setInterval(fetchMonthlyStats, 3000); // 3s polling
+fetchMonthlyStats();
+
+
+
 window.updateStats = function (devices) {
     const total = devices.length;
     const online = devices.filter(d => d.status === 'online').length;
-    // Intruders logic: Online + Not Trusted + Not Blocked
     const intruders = devices.filter(d => d.status === 'online' && !d.is_trusted && !d.is_blocked).length;
 
     // Use animateValue if available, else direct set
     if (typeof animateValue === 'function') {
-        animateValue("total-count", parseInt(document.getElementById("total-count").innerText) || 0, total, 1000);
-        animateValue("online-count", parseInt(document.getElementById("online-count").innerText) || 0, online, 1000);
-        animateValue("intruder-count", parseInt(document.getElementById("intruder-count").innerText) || 0, intruders, 1000);
+        const getVal = (id) => parseInt(document.getElementById(id).innerText.replace(/,/g, '')) || 0;
+        animateValue("total-count", getVal("total-count"), total, 1000);
+        animateValue("online-count", getVal("online-count"), online, 1000);
+        animateValue("intruder-count", getVal("intruder-count"), intruders, 1000);
     } else {
         document.getElementById('total-count').innerText = total;
         document.getElementById('online-count').innerText = online;
         document.getElementById('intruder-count').innerText = intruders;
     }
 
-    // Top Talkers Logic
-    const topTalkers = devices
-        .filter(d => trafficStats[d.mac] > 0)
-        .sort((a, b) => (trafficStats[b.mac] || 0) - (trafficStats[a.mac] || 0))
-        .slice(0, 5);
+    const now = new Date();
+    document.getElementById('last-update').innerHTML = `<i class="fas fa-clock mr-1"></i> Actualizado: ${now.toLocaleTimeString()}`;
 
-    const talkersList = document.getElementById('top-talkers-list');
-    if (talkersList) {
-        if (topTalkers.length === 0) {
-            talkersList.innerHTML = '<p class="text-slate-500 text-sm italic p-2">Esperando datos de tráfico...</p>';
+    // Top Talkers Logic (NOW MONTHLY)
+    const list = document.getElementById('top-talkers-list');
+    if (!list) return;
+
+    // Change Title to indicate Monthly
+    const ttTitle = document.querySelector("#view-dashboard h3 span.text-xs");
+    if (ttTitle) ttTitle.innerHTML = "(Mes Actual)";
+    // Or find parent via text? Or ID based... 
+    // Just in case, let's assume user knows or we can verify ID earlier. 
+    // The previous HTML had (Top Talkers) in span. Ideally we update that text.
+
+    // Use MONTHLY stats instead of live trafficStats
+    const sourceStats = window.monthlyStats || {};
+
+    // CASE INSENSITIVE LOOKUP
+    const getTotal = (mac) => {
+        if (!mac) return 0;
+        const macLower = mac.toLowerCase();
+
+        // Try direct lookup
+        if (sourceStats[macLower]) {
+            return (sourceStats[macLower].down || 0) + (sourceStats[macLower].up || 0);
+        }
+
+        // Fallback: iterate keys if simple lower case fails (e.g. mixed separators?)
+        // Usually lower matches.
+        return 0;
+    };
+
+    // Filter active talkers (from ALL known devices, not just current list which might be paginated/filtered? 
+    // Actually allDevices is usually the full list from fetchDevices)
+
+    // We need to map MACs from monthly stats even if device is offline now?
+    // Yes, Top Talkers should show whoever consumed most, even if offline now.
+    // So we iterate keys of sourceStats OR devices? 
+    // Better to iterate devices to get Alias/Vendor info.
+    // Ensure allDevices covers all history? Maybe not. 
+    // If a device is gone from ARP scan but present in DB, it should be in allDevices.
+
+    // --- TOP TALKERS PAGINATION ---
+    if (!window.topTalkersPage) window.topTalkersPage = 1;
+    const itemsPerPage = 6; // Professional consistent pagination
+
+    // Sort logic using ALL devices (Online + Offline) to ensure persistence
+    // Filter talkers: Must have > 0 traffic in sourceStats
+    const activeTalkers = devices
+        .filter(d => getTotal(d.mac) > 0)
+        .sort((a, b) => getTotal(b.mac) - getTotal(a.mac));
+
+    const totalTalkers = activeTalkers.length;
+    const totalPages = Math.ceil(totalTalkers / itemsPerPage) || 1;
+
+    // Bound page
+    if (window.topTalkersPage > totalPages) window.topTalkersPage = totalPages;
+    if (window.topTalkersPage < 1) window.topTalkersPage = 1;
+
+    // Slice
+    const startIndex = (window.topTalkersPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    const topTalkers = activeTalkers.slice(startIndex, endIndex);
+
+    // HTML Update
+    list.innerHTML = '';
+
+    if (activeTalkers.length === 0) {
+        if (Object.keys(sourceStats).length === 0) {
+            list.innerHTML = '<div class="text-slate-500 text-sm italic p-2">Cargando consumo mensual...</div>';
         } else {
-            const maxTraffic = Math.max(...Object.values(trafficStats), 1);
-            talkersList.innerHTML = topTalkers.map(d => {
-                const traffic = trafficStats[d.mac] || 0;
-                const percent = (traffic / maxTraffic) * 100;
-                const icon = getDeviceIcon(d.vendor || "", d.alias || "");
-                return `
-                <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-white/5 transition-colors">
-                    <div class="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-slate-300 shadow-sm border border-white/5 text-lg">
-                        ${icon}
-                    </div>
-                    <div class="flex-1">
-                        <div class="flex justify-between text-xs mb-1">
-                            <span class="font-medium text-slate-200">${d.alias || d.vendor || d.ip}</span>
-                            <span class="font-mono text-slate-400">${traffic} pkts</span>
+            list.innerHTML = '<div class="text-slate-500 text-sm italic p-2">Sin consumo este mes.</div>';
+        }
+    } else {
+        // Max val from the CURRENT PAGE or GLOBAL? Usually local max for bars looks better, or global max?
+        // Let's use topTalkers visible max for better bar scaling on widely different pages
+        const maxVal = Math.max(...topTalkers.map(d => getTotal(d.mac))) || 1;
+
+        topTalkers.forEach(d => {
+            const val = getTotal(d.mac);
+            const percent = Math.min((val / maxVal) * 100, 100);
+            const icon = getDeviceIcon(d.vendor || "", d.alias || "");
+            const isOffline = d.status === 'offline';
+            const offlineClass = isOffline ? 'opacity-60 grayscale' : '';
+
+            // Real time speed
+            const speedMbps = deviceSpeeds[d.mac ? d.mac.toLowerCase() : ''] || 0;
+            let speedHtml = '';
+            if (speedMbps > 0.01) { // Filter noise
+                const speedText = speedMbps < 1 ?
+                    `${(speedMbps * 1000).toFixed(0)} Kbps` :
+                    `${speedMbps.toFixed(1)} Mbps`;
+                speedHtml = `<span class="text-[10px] text-emerald-400 font-mono animate-pulse mr-2">↓${speedText}</span>`;
+            }
+
+            const item = document.createElement('div');
+            item.className = `flex items-center gap-3 group cursor-pointer hover:bg-white/5 p-2 rounded-lg transition-colors ${offlineClass}`;
+            // Add tooltip or indicator for offline
+            if (isOffline) item.title = "Dispositivo Offline (Histórico)";
+
+            item.onclick = function () {
+                switchView('devices');
+                const search = document.getElementById('device-search');
+                if (search) {
+                    search.value = d.ip;
+                    renderDevices(allDevices);
+                }
+            };
+
+            item.innerHTML = `
+                <div class="flex-shrink-0 w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center border border-white/5 group-hover:border-blue-500/30 transition-colors text-slate-400 relative">
+                    ${icon}
+                    ${isOffline ? '<span class="absolute -bottom-1 -right-1 w-2.5 h-2.5 bg-slate-600 rounded-full border-2 border-[#0f172a]"></span>' : ''}
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="flex justify-between items-center mb-1">
+                        <span class="text-sm font-medium text-slate-200 truncate w-24">${d.alias || d.vendor || d.ip}</span>
+                        <div class="flex items-center">
+                            ${speedHtml}
+                            <span class="text-xs text-blue-400 font-mono bg-blue-500/10 px-1.5 py-0.5 rounded">${formatBytes(val)}</span>
                         </div>
-                        <div class="w-full bg-slate-700/50 rounded-full h-1.5 overflow-hidden">
-                            <div class="bg-blue-500 h-1.5 rounded-full" style="width: ${percent}%"></div>
-                        </div>
                     </div>
-                </div>`;
-            }).join('');
+                    <div class="w-full bg-slate-700/30 rounded-full h-1.5 overflow-hidden">
+                        <div class="bg-gradient-to-r from-blue-600 to-cyan-400 h-1.5 rounded-full transition-all duration-1000" style="width: ${percent}%"></div>
+                    </div>
+                </div>
+            `;
+            list.appendChild(item);
+        });
+
+        // PAGINATION CONTROLS
+        if (totalTalkers > itemsPerPage) {
+            const controls = document.createElement('div');
+            controls.className = "flex justify-center items-center gap-4 mt-3 pt-2 border-t border-white/5";
+            controls.innerHTML = `
+                <button onclick="changeTopTalkersPage(-1)" class="p-1 text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed" ${window.topTalkersPage === 1 ? 'disabled' : ''}>
+                    <i class="fas fa-chevron-left"></i>
+                </button>
+                <span class="text-[10px] text-slate-500 font-mono">Página ${window.topTalkersPage} / ${totalPages}</span>
+                <button onclick="changeTopTalkersPage(1)" class="p-1 text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed" ${window.topTalkersPage === totalPages ? 'disabled' : ''}>
+                    <i class="fas fa-chevron-right"></i>
+                </button>
+            `;
+            list.appendChild(controls);
         }
     }
+}
 
-    // Last Update Time
-    const now = new Date();
-    const updateEl = document.getElementById('last-update');
-    if (updateEl) updateEl.innerHTML = `<i class="fas fa-clock mr-1"></i> ${now.toLocaleTimeString()}`;
-};
+// Pagination helper
+window.changeTopTalkersPage = function (delta) {
+    if (!window.topTalkersPage) window.topTalkersPage = 1;
+    window.topTalkersPage += delta;
+    updateStats(allDevices); // Re-render
+}
 
 function setTab(tab) {
     currentTab = tab;
@@ -241,18 +450,13 @@ function renderDevices(devices) {
         return true; // all
     });
 
-    // Update Badges (Phase 23)
-    const countBlocked = devices.filter(d => jailedDevices.includes(d.ip) || blockedDevices.includes(d.mac)).length;
-
+    // Update Badges
     if (document.getElementById('badge-all')) document.getElementById('badge-all').innerText = devices.length;
     if (document.getElementById('badge-intruder')) document.getElementById('badge-intruder').innerText = devices.filter(d => !d.is_trusted && d.status === 'online' && !jailedDevices.includes(d.ip) && !blockedDevices.includes(d.mac)).length;
     if (document.getElementById('badge-trusted')) document.getElementById('badge-trusted').innerText = devices.filter(d => d.is_trusted && d.status === 'online').length;
     if (document.getElementById('badge-offline')) document.getElementById('badge-offline').innerText = devices.filter(d => d.status === 'offline').length;
 
-    // UI for Tab Badges in new layout
-    // Assuming standard IDs from index.html
-
-    // 2. Sort (Blocked > Intruder > Online > Offline)
+    // 2. Sort
     filtered.sort((a, b) => {
         const isBlockedA = jailedDevices.includes(a.ip) || blockedDevices.includes(a.mac);
         const isBlockedB = jailedDevices.includes(b.ip) || blockedDevices.includes(b.mac);
@@ -277,10 +481,9 @@ function renderDevices(devices) {
     if (document.getElementById('btn-prev')) document.getElementById('btn-prev').disabled = currentPage === 1;
     if (document.getElementById('btn-next')) document.getElementById('btn-next').disabled = currentPage === totalPages;
 
-    // Render Grid
+    // Render Grid (DOM Diffing)
     const list = document.getElementById('device-list');
     if (!list) return;
-    list.innerHTML = '';
 
     if (paginated.length === 0) {
         list.innerHTML = `
@@ -291,92 +494,83 @@ function renderDevices(devices) {
         return;
     }
 
+    // Helper to get traffic
+    const getTraffic = (mac) => trafficStats[mac] || { down: 0, up: 0 };
+
+    // Mark current children
+    const currentIds = Array.from(list.children).map(c => c.id).filter(id => id);
+    const newIds = paginated.map(d => `device-${d.mac}`);
+
+    // Remove stale
+    Array.from(list.children).forEach(child => {
+        if (child.id && !newIds.includes(child.id)) {
+            child.remove();
+        }
+    });
+
+    // Remove placeholder if present
+    if (list.querySelector('.text-slate-500')) list.innerHTML = '';
+
     paginated.forEach(device => {
         const isOnline = device.status === 'online';
         const isTrusted = device.is_trusted;
         const isJailed = jailedDevices.includes(device.ip);
         const isLegacyBlocked = blockedDevices.includes(device.mac);
         const isBlocked = isJailed || isLegacyBlocked;
+        const tStats = getTraffic(device.mac);
 
-        const icon = getDeviceIcon(device.vendor || "", device.alias || "");
+        const statusClass = isBlocked ? 'bg-slate-900/40 opacity-75 grayscale' :
+            isOnline ? (isTrusted ? 'bg-emerald-900/10' : 'bg-red-900/10') :
+                'bg-slate-800/20 opacity-60 grayscale';
 
-        let statusClass = "";
-        let statusBorder = "";
+        const statusBorder = isBlocked ? 'border-red-900/30 hover:border-red-500/50' :
+            isOnline ? (isTrusted ? 'border-emerald-500/20 hover:border-emerald-500/40' : 'border-red-500/20 hover:border-red-500/40') :
+                'border-slate-700/30 hover:border-slate-500/30';
 
-        if (isBlocked) {
-            statusClass = 'bg-slate-900/40 opacity-75 grayscale';
-            statusBorder = 'border-red-900/30 hover:border-red-500/50';
-        } else if (isOnline) {
-            statusClass = isTrusted ? 'bg-emerald-900/10' : 'bg-red-900/10';
-            statusBorder = isTrusted ? 'border-emerald-500/20 hover:border-emerald-500/40' : 'border-red-500/20 hover:border-red-500/40';
-        } else {
-            statusClass = 'bg-slate-800/20 opacity-60 grayscale';
-            statusBorder = 'border-slate-700/30 hover:border-slate-500/30';
-        }
+        const cardId = `device-${device.mac}`;
+        let item = document.getElementById(cardId);
 
-        const item = document.createElement('div');
-        item.className = `p-4 rounded-xl border backdrop-blur-sm transition-all hover:scale-[1.01] ${statusClass} ${statusBorder} flex flex-col md:flex-row justify-between items-center mb-3 relative overflow-hidden group`;
-
-        // Blocked Overlay
-        const lockedOverlay = isBlocked ? `<div class="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/50 z-20"><i class="fas fa-lock text-5xl text-red-500/40 -rotate-12 drop-shadow-lg"></i></div>` : '';
-
-        item.innerHTML = `
-            ${lockedOverlay}
+        const innerHTML = `
+            ${isBlocked ? `<div class="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/50 z-20"><i class="fas fa-lock text-5xl text-red-500/40 -rotate-12 drop-shadow-lg"></i></div>` : ''}
             <div class="flex items-center w-full md:w-auto mb-3 md:mb-0 relative z-10 gap-4">
-                
-                <!-- Icon Box -->
                 <div class="w-12 h-12 rounded-xl flex items-center justify-center bg-slate-800/80 text-xl shadow-lg border border-white/5 relative group-hover:bg-slate-700 transition-colors">
-                    ${icon}
+                    ${getDeviceIcon(device.vendor || "", device.alias || "")}
                     ${isOnline && !isBlocked ? '<div class="absolute -bottom-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-slate-900 shadow-lg shadow-emerald-500/50"></div>' : ''}
                     ${isBlocked ? '<div class="absolute -bottom-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-slate-900 shadow-lg shadow-red-500/50"></div>' : ''}
                 </div>
-                
-                <!-- Info -->
                 <div>
                     <div class="flex items-center gap-2">
                         <h3 class="font-bold text-base text-slate-100 group-hover:text-blue-300 transition-colors">${device.alias || device.vendor || 'Dispositivo Desconocido'}</h3>
-                        
-                        <!-- Mini Badges -->
-                        ${isBlocked ?
-                '<span class="px-1.5 py-0.5 rounded text-[10px] bg-red-900/40 text-red-400 border border-red-800/50 font-bold uppercase tracking-wider">Bloqueado</span>'
-                : ''}
-                        
-                        ${!isTrusted && isOnline && !isBlocked ?
-                '<span class="px-1.5 py-0.5 rounded text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 font-bold uppercase tracking-wider animate-pulse">Intruso</span>'
-                : ''}
-
-                        ${!isOnline ?
-                '<span class="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-500 font-mono uppercase">Offline</span>'
-                : ''}
+                        ${isBlocked ? '<span class="px-1.5 py-0.5 rounded text-[10px] bg-red-900/40 text-red-400 border border-red-800/50 font-bold uppercase tracking-wider">Bloqueado</span>' : ''}
+                        ${!isTrusted && isOnline && !isBlocked ? '<span class="px-1.5 py-0.5 rounded text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 font-bold uppercase tracking-wider animate-pulse">Intruso</span>' : ''}
+                        ${!isOnline ? '<span class="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-500 font-mono uppercase">Offline</span>' : ''}
                     </div>
-                    
                     <div class="text-xs text-slate-500 mt-1 font-mono flex flex-wrap gap-3 items-center">
                         <span title="IP Address" class="hover:text-slate-300 cursor-help transition-colors"><i class="fas fa-ethernet mr-1.5"></i>${device.ip}</span>
                         <span title="MAC Address" class="hover:text-slate-300 cursor-help transition-colors"><i class="fas fa-fingerprint mr-1.5"></i>${device.mac}</span>
-                        ${device.interface ? `
-                            <span class="px-1 py-0.5 rounded bg-slate-800/80 border border-slate-700/50 text-[10px] text-slate-400 font-sans tracking-wide">
-                                ${device.interface}
-                            </span>
-                        ` : ''}
+                        ${device.interface ? `<span class="px-1 py-0.5 rounded bg-slate-800/80 border border-slate-700/50 text-[10px] text-slate-400 font-sans tracking-wide">${device.interface}</span>` : ''}
                     </div>
                 </div>
             </div>
 
-            <!-- Middle: Traffic Bar (Visual Candy) -->
-            <div class="hidden lg:block w-48 px-4 border-l border-r border-white/5 mx-6 opacity-80 group-hover:opacity-100 transition-opacity">
-                 <div class="text-[10px] text-slate-500 mb-1 flex justify-between font-mono">
-                    <span>Actividad</span>
-                    <span class="text-slate-300">${trafficStats[device.mac] || 0} pkt</span>
+            <!-- Traffic Stats -->
+            <div class="hidden lg:flex w-48 px-4 border-l border-r border-white/5 mx-6 opacity-80 group-hover:opacity-100 transition-opacity flex-col justify-center gap-1">
+                 <div class="flex justify-between text-[10px] font-mono text-slate-400">
+                    <span><i class="fas fa-arrow-down text-blue-500 mr-1"></i>${formatBytes(tStats.down)}</span>
+                    <span><i class="fas fa-arrow-up text-green-500 mr-1"></i>${formatBytes(tStats.up)}</span>
                 </div>
-                <div class="w-full bg-slate-800/50 rounded-full h-1">
-                     <div class="bg-blue-500 h-1 rounded-full transition-all duration-700 relative shadow-[0_0_10px_rgba(59,130,246,0.5)]" 
-                          style="width: ${Math.min(((trafficStats[device.mac] || 0) / (Math.max(...Object.values(trafficStats), 1))) * 100, 100)}%">
-                     </div>
+                <div class="w-full bg-slate-800/50 rounded-full h-1 flex overflow-hidden">
+                     <div class="bg-blue-500 h-full" style="width: 50%"></div>
+                     <div class="bg-green-500 h-full" style="width: 50%"></div>
                 </div>
             </div>
             
             <!-- Actions -->
             <div class="flex gap-2 relative z-10 w-full md:w-auto justify-end mt-3 md:mt-0">
+                 <button onclick="showTrafficHistory('${device.mac}')" class="w-8 h-8 rounded-lg bg-cyan-500/10 hover:bg-cyan-600 text-cyan-500 hover:text-white transition-all border border-cyan-500/20 flex items-center justify-center" title="Historial de Tráfico">
+                    <i class="fas fa-chart-line text-xs"></i>
+                </button>
+
                  ${!isTrusted ? `
                     <button onclick="setTrust('${device.mac}', true)" class="w-8 h-8 rounded-lg bg-emerald-500/10 hover:bg-emerald-500 text-emerald-500 hover:text-white transition-all border border-emerald-500/20 flex items-center justify-center" title="Hacer de Confianza">
                         <i class="fas fa-check text-xs"></i>
@@ -386,7 +580,6 @@ function renderDevices(devices) {
                         <i class="fas fa-ban text-xs"></i>
                     </button>
                 `}
-
                 ${isBlocked ? `
                     <button onclick="unwarnDevice('${device.ip}'); unblockDevice('${device.mac}')" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-600 text-slate-400 hover:text-white transition-all border border-slate-700 flex items-center justify-center" title="Desbloquear">
                         <i class="fas fa-unlock text-xs"></i>
@@ -396,23 +589,198 @@ function renderDevices(devices) {
                         <i class="fas fa-lock text-xs"></i>
                     </button>
                 `}
-                
                 <button onclick="editAlias('${device.mac}', '${device.alias || ''}')" class="w-8 h-8 rounded-lg bg-blue-500/10 hover:bg-blue-600 text-blue-500 hover:text-white transition-all border border-blue-500/20 flex items-center justify-center" title="Editar Nombre">
                     <i class="fas fa-pen text-xs"></i>
                 </button>
-                
                 <button onclick="triggerDeepScan('${device.ip}')" class="w-8 h-8 rounded-lg bg-purple-500/10 hover:bg-purple-600 text-purple-500 hover:text-white transition-all border border-purple-500/20 flex items-center justify-center" title="Scan Nmap">
                     <i class="fas fa-search text-xs"></i>
                 </button>
-
                 <button onclick="triggerAudit('${device.ip}')" class="w-8 h-8 rounded-lg bg-pink-500/10 hover:bg-pink-600 text-pink-500 hover:text-white transition-all border border-pink-500/20 flex items-center justify-center" title="Auditoría de Seguridad (Vulns)">
                     <i class="fas fa-bug text-xs"></i>
                 </button>
-            </div>
-        `;
-        list.appendChild(item);
+            </div>`;
+
+        if (!item) {
+            // Create new
+            item = document.createElement('div');
+            item.id = cardId;
+            item.className = `p-4 rounded-xl border backdrop-blur-sm transition-all hover:scale-[1.01] ${statusClass} ${statusBorder} flex flex-col md:flex-row justify-between items-center mb-3 relative overflow-hidden group`;
+            item.innerHTML = innerHTML;
+            list.appendChild(item);
+        } else {
+            // Update existing
+            // Only update className and innerHTML if changed to save DOM (simplified: just update)
+            // Actually, updating innerHTML destroys event listeners if any were added via split code, but we use inline onclicks
+            // To avoid "jump", we update properties.
+            item.className = `p-4 rounded-xl border backdrop-blur-sm transition-all hover:scale-[1.01] ${statusClass} ${statusBorder} flex flex-col md:flex-row justify-between items-center mb-3 relative overflow-hidden group`;
+            // Check if innerHTML needs update? (Comparing large strings is expensive, maybe just write it)
+            // To be super smooth, we could check. But writing innerHTML is fast enough if not recreating node.
+            if (item.innerHTML !== innerHTML) item.innerHTML = innerHTML;
+
+            // Ensure order: if item is not the last child, or correct index?
+            // Just appending moves it to end. If we iterate in order, this effectively sorts the DOM.
+            list.appendChild(item);
+        }
     });
 }
+
+// New Function for History
+async function showTrafficHistory(mac) {
+    if (!mac) return;
+
+    Swal.fire({
+        title: 'Historial de Tráfico',
+        html: `
+            <div id="history-buttons" class="flex flex-wrap justify-center gap-2 mb-4">
+                <button data-period="24h" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 transition-colors rounded text-xs select-period" onclick="loadTrafficChart('${mac}', '24h')">24h</button>
+                <button data-period="7d" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 transition-colors rounded text-xs select-period" onclick="loadTrafficChart('${mac}', '7d')">7 Días</button>
+                <button data-period="30d" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 transition-colors rounded text-xs select-period" onclick="loadTrafficChart('${mac}', '30d')">30 Días</button>
+                <button data-period="365d" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 transition-colors rounded text-xs select-period" onclick="loadTrafficChart('${mac}', '365d')">1 Año</button>
+                <button data-period="all" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 transition-colors rounded text-xs select-period" onclick="loadTrafficChart('${mac}', 'all')">Todo</button>
+            </div>
+            <div class="h-64 relative">
+                <div id="chart-loader" class="absolute inset-0 bg-slate-900/80 flex items-center justify-center z-10 hidden">
+                    <i class="fas fa-spinner fa-spin text-blue-500 text-3xl"></i>
+                </div>
+                <canvas id="trafficHistoryChart"></canvas>
+            </div>
+        `,
+        width: '700px',
+        background: '#1e293b',
+        color: '#fff',
+        showConfirmButton: false,
+        didOpen: () => {
+            // Initial load
+            loadTrafficChart(mac, '24h');
+        }
+    });
+}
+
+window.loadTrafficChart = async (mac, period) => {
+    // 1. Update Buttons Visual State
+    const container = document.getElementById('history-buttons');
+    if (container) {
+        container.querySelectorAll('button').forEach(btn => {
+            btn.classList.remove('bg-blue-600', 'text-white', 'ring-2', 'ring-blue-400');
+            btn.classList.add('bg-slate-700', 'text-slate-300');
+        });
+        const activeBtn = container.querySelector(`button[data-period="${period}"]`);
+        if (activeBtn) {
+            activeBtn.classList.remove('bg-slate-700', 'text-slate-300');
+            activeBtn.classList.add('bg-blue-600', 'text-white', 'ring-2', 'ring-blue-400');
+        }
+    }
+
+    // 2. Show Loader
+    const loader = document.getElementById('chart-loader');
+    if (loader) loader.classList.remove('hidden');
+
+    try {
+        const res = await fetch(`${API_URL}/traffic/history/${mac}?period=${period}`);
+        if (!res.ok) throw new Error("Error fetching history");
+
+        const data = await res.json();
+
+        const ctx = document.getElementById('trafficHistoryChart');
+        if (!ctx) return; // Closed modal?
+
+        // Destroy old chart
+        if (window.myTrafficChart) {
+            window.myTrafficChart.destroy();
+            window.myTrafficChart = null;
+        }
+
+        // Process Data
+        // If data is dense, maybe aggregate? For now, raw points.
+        const labels = data.map(d => new Date(d.timestamp + "Z").toLocaleString());
+        const down = data.map(d => d.bytes_down);
+        const up = data.map(d => d.bytes_up);
+
+        if (data.length === 0) {
+            // Show empty state? Or empty chart.
+            // Let chart render empty axes or handle visual feedback
+        }
+
+        // Create Chart
+        window.myTrafficChart = new Chart(ctx.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Descarga',
+                        data: down,
+                        borderColor: '#3b82f6', // blue-500
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    },
+                    {
+                        label: 'Subida',
+                        data: up,
+                        borderColor: '#10b981', // emerald-500
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    mode: 'index',
+                    intersect: false,
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: (val) => formatBytes(val, 0),
+                            color: '#94a3b8'
+                        },
+                        grid: { color: '#334155' }
+                    },
+                    x: {
+                        ticks: { color: '#94a3b8', maxTicksLimit: 8 },
+                        grid: { display: false }
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: '#fff' } },
+                    tooltip: {
+                        backgroundColor: '#0f172a',
+                        titleColor: '#fff',
+                        bodyColor: '#cbd5e1',
+                        borderColor: '#334155',
+                        borderWidth: 1,
+                        callbacks: {
+                            label: function (context) {
+                                let label = context.dataset.label || '';
+                                if (label) {
+                                    label += ': ';
+                                }
+                                if (context.parsed.y !== null) {
+                                    label += formatBytes(context.parsed.y);
+                                }
+                                return label;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+    } catch (e) {
+        console.error(e);
+        // Show error message in chart area
+        const ctx = document.getElementById('trafficHistoryChart');
+        if (ctx && ctx.parentNode) ctx.parentNode.innerHTML = '<div class="flex items-center justify-center h-full text-red-400">Error cargando datos</div>';
+    } finally {
+        // Hide Loader
+        if (loader) loader.classList.add('hidden');
+    }
+};
 
 function animateValue(id, start, end, duration) {
     if (start === end) return;
@@ -902,6 +1270,64 @@ async function showLogs() {
     });
 }
 
+// Initial Load
+// Assuming fetchTrafficStats() is defined elsewhere or will be added.
+// fetchTrafficStats();
+// fetchRecentActivity(); // This will be called by the interval if currentView is dashboard
+
+// Loop
+// Assuming currentView is defined globally or accessible.
+// setInterval(() => {
+//     fetchTrafficStats();
+//     if(currentView === 'dashboard') fetchRecentActivity();
+// }, 2000); // 2s polling
+
+// Logs
+async function fetchRecentActivity() {
+    const container = document.getElementById('mini-logs');
+    if (!container) return;
+
+    try {
+        const res = await fetch(`${API_URL}/events?limit=20`);
+        if (!res.ok) return;
+        const events = await res.json();
+
+        if (events.length === 0) {
+            container.innerHTML = `<div class="text-slate-500 text-sm italic text-center py-4">Sin actividad reciente</div>`;
+            return;
+        }
+
+        container.innerHTML = events.map(ev => {
+            let iconClass = "text-blue-400 fa-info-circle";
+            let bgClass = "bg-blue-500/10";
+
+            if (ev.event_type === 'WARNING') { iconClass = "text-amber-400 fa-exclamation-triangle"; bgClass = "bg-amber-500/10"; }
+            if (ev.event_type === 'DANGER') { iconClass = "text-red-400 fa-skull"; bgClass = "bg-red-500/10"; }
+            if (ev.event_type === 'SYSTEM') { iconClass = "text-purple-400 fa-server"; bgClass = "bg-purple-500/10"; }
+
+            // Format date: Just time if today, else date+time
+            const date = new Date(ev.timestamp + "Z"); // Ensure UTC if backend sends it
+            const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            return `
+                <div class="flex items-start gap-3 p-2 rounded-lg hover:bg-white/5 transition-colors">
+                    <div class="w-8 h-8 rounded-full ${bgClass} flex items-center justify-center shrink-0 mt-0.5">
+                        <i class="fas ${iconClass} text-xs"></i>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-xs text-slate-300 leading-snug">${ev.message}</p>
+                        <span class="text-[10px] text-slate-500 font-mono">${timeStr}</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+    } catch (e) {
+        // silent fail
+    }
+}
+
+
 async function fetchLogs() {
     try {
         const response = await fetch(`${API_URL}/events?limit=50`);
@@ -1175,7 +1601,7 @@ function renderSpeedChart(data) {
 }
 
 async function runSpeedtest() {
-    const btn = document.getElementById('btn-speedtest');
+    const btn = document.getElementById('btn-speedtest-lg');
     const originalText = btn.innerHTML;
 
     btn.disabled = true;
