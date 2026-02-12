@@ -14,7 +14,7 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-INSTALL_DIR="/opt/netguard"
+INSTALL_DIR="/media/Jesus-Aroldo/Anexo/apps/netguard"
 USER_HOME=$(eval echo ~${SUDO_USER})
 
 echo -e "${GREEN}[1/5] Instalando dependencias del sistema...${NC}"
@@ -22,6 +22,8 @@ apt-get update -qq
 apt-get install -y python3-venv python3-pip python3-gi gir1.2-webkit2-4.0 libgirepository1.0-dev libcairo2-dev -qq
 
 echo -e "${GREEN}[2/5] Configurando directorio de instalación...${NC}"
+# Crear directorio de apps si no existe
+mkdir -p "/media/Jesus-Aroldo/Anexo/apps"
 mkdir -p "$INSTALL_DIR"
 cp -r ./* "$INSTALL_DIR/"
 chown -R root:root "$INSTALL_DIR"
@@ -68,21 +70,28 @@ systemctl enable netguard
 systemctl restart netguard
 
 echo -e "${GREEN}[5/5] Creando Acceso Directo de Escritorio...${NC}"
+
+# Copiar icono al sistema (Estándar Linux)
+if [ -f "icon.png" ]; then
+    mkdir -p /usr/share/icons/hicolor/512x512/apps/
+    cp icon.png /usr/share/icons/hicolor/512x512/apps/netguard.png
+    ICON_PATH="/usr/share/icons/hicolor/512x512/apps/netguard.png"
+else
+    ICON_PATH="$INSTALL_DIR/static/img/logo.png"
+fi
+
 cat <<EOF > /usr/share/applications/netguard.desktop
 [Desktop Entry]
 Name=NetGuard Pro
 Comment=Monitor de Seguridad de Red Profesional
 Exec=/usr/bin/netguard-gui
-Icon=$INSTALL_DIR/static/img/logo.png
+Icon=netguard
 Terminal=false
 Type=Application
 Categories=Network;Security;System;
+StartupWMClass=NetGuard Pro
+StartupNotify=true
 EOF
-
-# Copiar icono si existe, o usar uno generico
-if [ -f "icon.png" ]; then
-    cp icon.png "$INSTALL_DIR/static/img/logo.png"
-fi
 
 echo -e "${BLUE}------------------------------------------------${NC}"
 echo -e "${GREEN}✅ Instalación Completa.${NC}"
