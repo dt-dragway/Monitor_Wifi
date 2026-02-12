@@ -14,7 +14,7 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-INSTALL_DIR="/media/Jesus-Aroldo/Anexo/apps/netguard"
+INSTALL_DIR="/opt/netguard"
 USER_HOME=$(eval echo ~${SUDO_USER})
 
 echo -e "${GREEN}[1/5] Instalando dependencias del sistema...${NC}"
@@ -22,8 +22,6 @@ apt-get update -qq
 apt-get install -y python3-venv python3-pip python3-gi gir1.2-webkit2-4.0 libgirepository1.0-dev libcairo2-dev -qq
 
 echo -e "${GREEN}[2/5] Configurando directorio de instalación...${NC}"
-# Crear directorio de apps si no existe
-mkdir -p "/media/Jesus-Aroldo/Anexo/apps"
 mkdir -p "$INSTALL_DIR"
 cp -r ./* "$INSTALL_DIR/"
 chown -R root:root "$INSTALL_DIR"

@@ -1,52 +1,97 @@
-
 import sys
-import time
 import threading
+import time
 import requests
 import webview
+import os
+import socket
+from PIL import Image
+import pystray
 from webview.menu import Menu, MenuAction
 
 # Configuración
 BACKEND_URL = "http://localhost:8000"
 WINDOW_TITLE = "NetGuard Profesional"
 ICON_PATH = "/opt/netguard/icon.png"
+TARGET_URL = 'http://localhost:8000'
+ICON_PATH = os.path.abspath("icon.png")
+main_window = None
 
-def check_backend():
-    """Espera a que el backend esté listo antes de mostrar la UI real"""
-    max_retries = 30 # 30 segundos máximo de espera al inicio
-    for _ in range(max_retries):
+def on_show(icon, item):
+    if main_window:
+        main_window.show()
+        main_window.restore()
+
+def on_exit(icon, item):
+    icon.stop()
+    os._exit(0)
+
+def run_tray():
+    try:
+        image = Image.open(ICON_PATH)
+        menu = pystray.Menu(
+            pystray.MenuItem("Abrir NetGuard", on_show, default=True),
+            pystray.MenuItem("Salir", on_exit)
+        )
+        
+        icon = pystray.Icon("NetGuard", image, "NetGuard Pro", menu=menu)
+        icon.run()
+    except Exception as e:
+        print(f"Error tray: {e}")
+
+def on_minimized():
+    """Al minimizar, ocultar la ventana (irse al tray)"""
+    if main_window:
+        time.sleep(0.2) # Pequeña pausa para asegurar animación
+        main_window.hide()
+
+def wait_for_backend(window):
+    # Intentar contactar backend
+    max_tries = 30
+    for i in range(max_tries):
         try:
-            r = requests.get(f"{BACKEND_URL}/api/devices", timeout=2)
+            r = requests.get(TARGET_URL + '/api/devices', timeout=1)
             if r.status_code == 200:
-                return True
+                print("✅ Backend listo. Cargando UI...")
+                window.load_url(TARGET_URL)
+                return
         except:
-            time.sleep(1)
-    return False
+            pass
+        time.sleep(1)
+        
+    print("❌ Backend no respondió a tiempo.")
+    window.load_url('data:text/html,<h1 style="color:red;text-align:center;margin-top:20%">Error: El servicio NetGuard no responde.</h1><p style="text-align:center">Verifica: sudo systemctl status netguard</p>')
 
-def on_loaded():
-    # Lógica al cargar (opcional)
-    pass
-
-def load_ui(window):
-    # Mostrar pantalla de carga
-    window.load_url(f"data:text/html,<html><body style='background:#0f172a;color:white;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;'><h1>🛡️ Iniciando NetGuard...</h1></body></html>")
-    
-    # Verificar backend en hilo aparte para no congelar UI
-    if check_backend():
-        window.load_url(BACKEND_URL)
-    else:
-        window.load_url(f"data:text/html,<html><body style='background:#0f172a;color:#ef4444;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;'><h1>❌ Error: El servicio NetGuard no responde.</h1><p>Verifica 'systemctl status netguard'</p></body></html>")
+def ensure_single_instance():
+    """Asegura que solo haya una ventana abierta usando un socket lock"""
+    global _socket_lock
+    _socket_lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        # Puerto arbitrario para bloqueo (no visible desde red externa)
+        _socket_lock.bind(('127.0.0.1', 44555))
+    except socket.error:
+        print("⚠️ NetGuard Pro ya está en ejecución en otra ventana.")
+        sys.exit(0)
 
 if __name__ == '__main__':
-    # Crear ventana
-    window = webview.create_window(
-        WINDOW_TITLE, 
-        url='about:blank',
-        width=1280, 
+    ensure_single_instance()
+    
+    # Iniciar Tray en hilo paralelo
+    threading.Thread(target=run_tray, daemon=True).start()
+    
+    # Crear ventana (asignar a global)
+    main_window = webview.create_window(
+        'NetGuard Pro', 
+        html='<h1 style="color:#3b82f6;text-align:center;margin-top:20%;font-family:sans-serif">🛡️ Iniciando NetGuard...</h1><p style="text-align:center;font-family:sans-serif;color:#64748b">Conectando con el motor de seguridad...</p>', 
+        width=1200, 
         height=800, 
-        resizable=True,
-        min_size=(800, 600)
+        background_color='#0f172a',
+        text_select=False,
+        resizable=True
     )
     
-    # Iniciar carga
-    webview.start(load_ui, window)
+    # Conectar evento de minimizar
+    main_window.events.minimized += on_minimized
+    
+    # Iniciar
+    webview.start(wait_for_backend, main_window, debug=True)
