@@ -175,7 +175,7 @@ def update_network_status():
 
                 print(f"Nuevo dispositivo detectado: {ip} ({mac}) - {vendor} / {alias} [{interface}]")
                 from .logger import log_event
-                log_event("INFO", f"Nuevo dispositivo detectado: {vendor} ({ip})", mac)
+                # Log condicional manejado abajo
                 
                 # 🚨 NOTIFICAR SI ES UN INTRUSO (no confiable)
                 if not is_trusted:
@@ -187,7 +187,7 @@ def update_network_status():
                         'alias': alias
                     })
                     
-                    # 📝 REGISTRAR INTRUSO EN BD
+                    # 📝 REGISTRAR INTRUSO EN BD (Tabla Específica)
                     intruder_log = IntruderLog(
                         device_mac=mac,
                         device_ip=ip,
@@ -196,6 +196,12 @@ def update_network_status():
                         detection_type="new_device"
                     )
                     session.add(intruder_log)
+                    
+                    # 🔥 REGISTRAR EVENTO PÚBLICO (Para Dashboard Actividad Reciente)
+                    log_event("DANGER", f"Intruso detectado: {alias or vendor} ({ip})", mac)
+                else:
+                    # Logs normales
+                    log_event("INFO", f"Nuevo dispositivo: {alias or vendor} ({ip})", mac)
 
 
         # 3. Manejar dispositivos que ya no están (Offline)

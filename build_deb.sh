@@ -92,7 +92,7 @@ Section: utils
 Priority: optional
 Architecture: $ARCH
 Maintainer: JDiaz <jdiaz1589@outlook.com>
-Depends: python3, python3-venv, python3-pip, python3-gi, gir1.2-webkit2-4.0, libgirepository1.0-dev, libcairo2-dev, git, rsync, python3-requests
+Depends: python3, python3-venv, python3-pip, python3-gi, gir1.2-webkit2-4.0, libgirepository1.0-dev, libcairo2-dev, git, rsync, python3-requests, libnotify-bin
 Description: Monitor de Seguridad Wifi y Red Profesional
  NetGuard protege tu red detectando intrusos en tiempo real,
  monitoreando el tráfico y gestionando dispositivos.

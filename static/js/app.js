@@ -411,7 +411,7 @@ window.updateStats = function (devices) {
                 </div>
                 <div class="flex-1 min-w-0">
                     <div class="flex justify-between items-center mb-1">
-                        <span class="text-sm font-medium text-slate-200 truncate w-24">${d.alias || d.vendor || d.ip}</span>
+                        <span class="text-sm font-medium text-slate-200 truncate flex-1" title="${d.alias || d.vendor || d.ip}">${d.alias || d.vendor || d.ip}</span>
                         <div class="flex items-center">
                             ${speedHtml}
                             <span class="text-xs text-blue-400 font-mono bg-blue-500/10 px-1.5 py-0.5 rounded">${formatBytes(val)}</span>
@@ -1942,3 +1942,5 @@ window.restoreConfig = restoreConfig;
 window.updateStats = updateStats;
 window.renderDevices = renderDevices;
 if (typeof fetchTopology !== 'undefined') window.fetchTopology = fetchTopology;
+window.runSpeedtest = runSpeedtest;
+window.fetchSpeedHistory = fetchSpeedHistory;
