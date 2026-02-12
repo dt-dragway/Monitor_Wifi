@@ -19,27 +19,31 @@ import asyncio
 
 def get_vendor(mac):
     try:
-        # MacLookup en versiones recientes es Async o retorna coroutine
-        # Usamos asyncio.run para ejecutarlo síncronamente en este contexto
-        # Ojo: crear un event loop nuevo cada vez es costoso, pero funcional para este script simple
-        # Si ya hay loop corriendo, esto fallara. Pero estamos en un thread aparte (background_scanner)
-        # asi que deberia funcionar.
-        
+        # Intentar llamada directa síncrona primero (versiones antiguas)
         try:
-             # Check if we have an event loop
+             return mac_lookup.lookup(mac)
+        except TypeError:
+             pass # Es asíncrona
+
+        # Versiones nuevas async de mac-vendor-lookup
+        import asyncio
+        loop = None
+        try:
              loop = asyncio.get_event_loop()
         except RuntimeError:
              loop = asyncio.new_event_loop()
              asyncio.set_event_loop(loop)
 
-        # Para versiones nuevas:
+        if loop.is_running():
+             # Si ya hay un loop corriendo, no podemos usar run_until_complete directamente
+             # Retornamos "Desconocido" temporalmente o usamos un hack
+             return "Desconocido (Async)"
+        
         return loop.run_until_complete(mac_lookup.lookup(mac))
-    except Exception:
-        # Fallback a version sincrona o error
-        try:
-             return mac_lookup.lookup(mac) 
-        except:
-             return "Desconocido"
+
+    except Exception as e:
+        # print(f"Error MacLookup: {e}")
+        return "Desconocido"
 
 def get_hostname(ip):
     try:
@@ -54,14 +58,23 @@ def update_network_status():
     Marca como offline los que no responden.
     """
     print("Iniciando actualización de red...")
-    active_devices = scan_network() 
+    
+    # 1. Obtener subredes adicionales de la configuración
+    extra_subnets = []
+    try:
+        from .models import Settings
+        with Session(engine) as session:
+            setting = session.get(Settings, "scan_subnets")
+            if setting and setting.value:
+                extra_subnets = [s.strip() for s in setting.value.split(',') if s.strip()]
+                print(f"📋 Subredes adicionales configuradas: {extra_subnets}")
+    except Exception as e:
+        print(f"⚠️ Error leyendo configuración de subredes: {e}")
+
+    # 2. Ejecutar escaneo (auto + manual)
+    active_devices = scan_network(target_cidrs=extra_subnets) 
     
     with Session(engine) as session:
-        # 1. Marcar todos como offline temporalmente? O mejor comparar.
-        # Estrategia: Obtener todos los dispositivos de la DB.
-        # Los que están en active_devices -> online + update timestamp
-        # Los que NO están en active_devices -> offline (si su last_seen es antiguo)
-        
         active_macs = set()
 
         for d in active_devices:
@@ -99,7 +112,15 @@ def update_network_status():
                              existing_device.alias = hostname
 
                 session.add(existing_device)
-                
+
+                # 🧹 IP TAKEOVER CHECK:
+                try:
+                    conflicts = session.exec(select(Device).where(Device.ip == ip, Device.mac != mac, Device.status == "online")).all()
+                    for old in conflicts:
+                        old.status = "offline"
+                        session.add(old)
+                except: pass
+                 
                 # 🚨 NOTIFICAR SI UN INTRUSO SE RECONECTÓ
                 if was_offline and is_intruder:
                     from .notifier import notify_intruder
@@ -125,16 +146,33 @@ def update_network_status():
                 vendor = get_vendor(mac)
                 interface = d.get('interface') # Obtener interfaz
                 
-                if d.get('is_local'):
-                     alias = "💻 ESTE SERVIDOR (TÚ)"
-                else:
-                     hostname = get_hostname(ip)
-                     alias = hostname if hostname else None
-                
-                is_trusted = True if d.get('is_local') else False
-                
-                new_device = Device(mac=mac, ip=ip, vendor=vendor, alias=alias, status="online", is_trusted=is_trusted, interface=interface)
+                # Check Localhost
+                is_local = d.get('is_local', False)
+                alias = "💻 ESTE SERVIDOR (TÚ)" if is_local else get_hostname(ip)
+                is_trusted = is_local
+
+                new_device = Device(
+                    mac=mac,
+                    ip=ip,
+                    vendor=vendor,
+                    hostname=alias, # Legacy mapping
+                    alias=alias,
+                    status="online",
+                    last_seen=datetime.utcnow(),
+                    first_seen=datetime.utcnow(),
+                    is_trusted=is_trusted,
+                    interface=interface
+                )
                 session.add(new_device)
+                
+                # 🧹 IP TAKEOVER CHECK (NUEVO DISPOSITIVO):
+                try:
+                    conflicts = session.exec(select(Device).where(Device.ip == ip, Device.mac != mac, Device.status == "online")).all()
+                    for old in conflicts:
+                        old.status = "offline"
+                        session.add(old)
+                except: pass
+
                 print(f"Nuevo dispositivo detectado: {ip} ({mac}) - {vendor} / {alias} [{interface}]")
                 from .logger import log_event
                 log_event("INFO", f"Nuevo dispositivo detectado: {vendor} ({ip})", mac)
@@ -160,7 +198,7 @@ def update_network_status():
                     session.add(intruder_log)
 
 
-        # 2. Manejar dispositivos que ya no están (Offline)
+        # 3. Manejar dispositivos que ya no están (Offline)
         # Buscar dispositivos que estaban online pero NO están en active_macs
         statement = select(Device).where(Device.status == "online")
         online_devices = session.exec(statement).all()

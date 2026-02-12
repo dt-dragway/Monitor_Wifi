@@ -446,3 +446,78 @@ def get_intruders(limit: int = 50, session: Session = Depends(get_session)):
         .limit(limit)
     ).all()
     return intruders
+
+# --- CONFIGURACIÓN DE RED ---
+# (Endpoints de subnets están definidos más abajo junto con el modelo Pydantic)
+
+# --- ADMIN RESET ---
+from sqlmodel import delete
+
+@app.post("/api/admin/reset_db")
+def reset_db_endpoint(session: Session = Depends(get_session)):
+    """
+    Borra todos los datos de dispositivos, logs y tráfico.
+    Mantiene la configuración.
+    """
+    try:
+        # Borrar tablas de datos
+        session.exec(delete(Device))
+        session.exec(delete(EventLog))
+        session.exec(delete(TrafficLog))
+        session.exec(delete(IntruderLog))
+        session.exec(delete(SpeedTestResult))
+        # No borrar Settings
+        
+        session.commit()
+        
+        # Limpiar memoria del analizador
+        try:
+            from backend.traffic_analyzer import known_macs, traffic_stats
+            known_macs.clear()
+            traffic_stats.clear()
+        except: pass
+            
+        print("☢️ Base de datos reiniciada por el usuario.")
+        return {"status": "success", "message": "Base de datos limpia"}
+        
+    except Exception as e:
+        print(f"Error reset DB: {e}")
+        # Fallback a método SQLAlchemy si delete falla
+        try:
+            session.query(Device).delete()
+            session.query(EventLog).delete()
+            session.query(TrafficLog).delete()
+            session.query(IntruderLog).delete()
+            session.query(SpeedTestResult).delete()
+            session.commit()
+            return {"status": "success", "message": "Base de datos limpia (Legacy)"}
+        except Exception as e2:
+            raise HTTPException(status_code=500, detail=f"Error borrando DB: {e} | {e2}")
+
+from pydantic import BaseModel
+
+class SubnetsConfig(BaseModel):
+    subnets: str
+
+@app.get("/api/config/subnets")
+def get_scan_subnets(session: Session = Depends(get_session)):
+    """Obtiene la lista de subredes configuradas para escanear"""
+    setting = session.get(Settings, "scan_subnets")
+    return {"subnets": setting.value if setting else ""}
+
+@app.post("/api/config/subnets")
+def set_scan_subnets(config: SubnetsConfig, session: Session = Depends(get_session)):
+    """Guarda la lista de subredes para escanear (separadas por coma)"""
+    setting = session.get(Settings, "scan_subnets")
+    if not setting:
+        setting = Settings(key="scan_subnets", value=config.subnets)
+    else:
+        setting.value = config.subnets
+    
+    session.add(setting)
+    session.commit()
+    session.refresh(setting)
+    
+    # Trigger inmediato de escaneo en background
+    # Opcional, pero útil para feedback rápido
+    return {"status": "updated", "subnets": setting.value}

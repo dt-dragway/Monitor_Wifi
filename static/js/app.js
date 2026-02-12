@@ -1,26 +1,50 @@
+// POLYFILL FOR SWAL (Offline Mode Support)
+if (typeof Swal === 'undefined') {
+    console.warn("SweetAlert not loaded. Using fallback.");
+    window.Swal = {
+        fire: async (opts) => {
+            if (opts.title) alert(opts.title + "\n" + (opts.text || ""));
+            return { isConfirmed: true, value: { webhook: '', subnets: '' } };
+        },
+        mixin: () => ({ fire: (opts) => console.log("Toast:", opts) }),
+        stopTimer: () => { },
+        resumeTimer: () => { }
+    };
+}
+
 const API_URL = '/api';
 
 // Configuración de SweetAlert2 con tema oscuro/glass
-const Toast = Swal.mixin({
-    toast: true,
-    position: 'top-end',
-    showConfirmButton: false,
-    timer: 3000,
-    timerProgressBar: true,
-    background: '#1e293b',
-    color: '#fff',
-    didOpen: (toast) => {
-        toast.addEventListener('mouseenter', Swal.stopTimer)
-        toast.addEventListener('mouseleave', Swal.resumeTimer)
-    }
-});
+// (Mantener el bloque try-catch que ya puse para Toast)
+let Toast;
+try {
+    Toast = Swal.mixin({
+        toast: true,
+        position: 'top-end',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true,
+        background: '#1e293b',
+        color: '#fff',
+        didOpen: (toast) => {
+            toast.addEventListener('mouseenter', Swal.stopTimer)
+            toast.addEventListener('mouseleave', Swal.resumeTimer)
+        }
+    });
+} catch (e) {
+    console.warn("Swal not loaded:", e);
+    Toast = { fire: (opts) => console.log("Toast:", opts) };
+}
 
 async function fetchDevices() {
     try {
         const response = await fetch(`${API_URL}/devices`);
         const devices = await response.json();
-        renderDevices(devices);
-        updateStats(devices);
+        // Check if renderDevices exists (hoisted)
+        if (typeof renderDevices === 'function') renderDevices(devices);
+        if (typeof updateStats === 'function') updateStats(devices);
+        // Also call global window versions if attached later
+        if (window.updateDashboardData) window.updateDashboardData(devices);
     } catch (error) {
         console.error('Error fetching devices:', error);
     }
@@ -169,8 +193,12 @@ function getOfflineTime(lastSeenStr) {
 
 // --- VIEW MANAGEMENT (Phase 24: Persistence) ---
 function switchView(viewName) {
-    // Save state
-    localStorage.setItem('currentView', viewName);
+    // Save state (Protected)
+    try {
+        localStorage.setItem('currentView', viewName);
+    } catch (e) {
+        console.warn("Storage write failed", e);
+    }
 
     // Hide all views
     document.querySelectorAll('.view-section').forEach(el => el.classList.add('hidden'));
@@ -215,7 +243,12 @@ function switchView(viewName) {
 
 // Ensure defaults with persistence
 window.addEventListener('load', () => {
-    const savedView = localStorage.getItem('currentView') || 'dashboard';
+    let savedView = 'dashboard';
+    try {
+        savedView = localStorage.getItem('currentView') || 'dashboard';
+    } catch (e) {
+        console.warn('LocalStorage error:', e);
+    }
     switchView(savedView);
 });
 
@@ -456,11 +489,64 @@ function changePage(delta) {
     renderDevices(allDevices);
 }
 
+let searchTerm = ''; // Global search term
+
+function setupSearch() {
+    const search = document.getElementById('device-search');
+    if (!search) return;
+
+    // Crear contenedor wrapper si no existe para el botón de limpieza
+    if (!search.parentElement.classList.contains('relative')) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'relative flex items-center';
+        search.parentNode.insertBefore(wrapper, search);
+        wrapper.appendChild(search);
+
+        // Icono de lupa (ya estaba fuera, movemos dentro si queremos o lo dejamos)
+        // El HTML actual tiene un div wrapper con icono y input. Usaremos ese.
+    }
+
+    // Agregar botón X para limpiar
+    const container = search.parentElement;
+    let clearBtn = container.querySelector('.clear-search');
+    if (!clearBtn) {
+        clearBtn = document.createElement('i');
+        clearBtn.className = 'fas fa-times text-slate-500 cursor-pointer absolute right-3 hover:text-white clear-search hidden';
+        clearBtn.onclick = () => {
+            search.value = '';
+            searchTerm = '';
+            clearBtn.classList.add('hidden');
+            renderDevices(allDevices);
+        };
+        container.style.position = 'relative'; // Asegurar relativo
+        container.appendChild(clearBtn);
+    }
+
+    search.addEventListener('input', (e) => {
+        searchTerm = e.target.value.toLowerCase();
+        if (searchTerm) clearBtn.classList.remove('hidden');
+        else clearBtn.classList.add('hidden');
+
+        currentPage = 1; // Reset page on search
+        renderDevices(allDevices);
+    });
+}
+
+// Llamar setupSearch al inicio
+document.addEventListener('DOMContentLoaded', setupSearch);
+
 function renderDevices(devices) {
+    if (!devices) return;
     allDevices = devices; // Store for re-rendering
 
     // 1. Filter
     let filtered = devices.filter(d => {
+        // Text Search Filter
+        if (searchTerm) {
+            const text = (d.ip + " " + d.mac + " " + (d.alias || "") + " " + (d.vendor || "")).toLowerCase();
+            if (!text.includes(searchTerm)) return false;
+        }
+
         const isOnline = d.status === 'online';
         const isTrusted = d.is_trusted;
         const isJailed = jailedDevices.includes(d.ip);
@@ -469,9 +555,12 @@ function renderDevices(devices) {
 
         if (currentTab === 'intruder') return isOnline && !isTrusted && !isBlocked;
         if (currentTab === 'trusted') return isTrusted && isOnline;
-        if (currentTab === 'offline') return !isOnline;
         if (currentTab === 'blocked') return isBlocked;
-        return true; // all
+        if (currentTab === 'offline') return !isOnline;
+
+        // Tab 'all' muestra todo PERO prioriza online, o muestra todo?
+        // Tab 'all' debería mostrar TODO lo activo, y quizás offline al final.
+        return true;
     });
 
     // Update Badges
@@ -1407,13 +1496,23 @@ fetchJailedDevices();
 
 // --- SETTINGS ---
 async function openSettings() {
-    // 1. Get current webhook
+    // 1. Get current configs
     let currentUrl = '';
+    let currentSubnets = '';
+
     try {
-        const res = await fetch(`${API_URL}/settings/webhook`);
-        if (res.ok) {
-            const data = await res.json();
+        const [resWebhook, resSubnets] = await Promise.all([
+            fetch(`${API_URL}/settings/webhook`),
+            fetch(`${API_URL}/config/subnets`)
+        ]);
+
+        if (resWebhook.ok) {
+            const data = await resWebhook.json();
             currentUrl = data.url || '';
+        }
+        if (resSubnets.ok) {
+            const data = await resSubnets.json();
+            currentSubnets = data.subnets || '';
         }
     } catch (e) { console.error(e); }
 
@@ -1431,6 +1530,15 @@ async function openSettings() {
                 </div>
 
                 <hr class="border-white/10">
+
+                <!-- Network Scanning Section -->
+                <div>
+                     <h3 class="text-indigo-400 font-bold mb-2"><i class="fas fa-network-wired mr-2"></i>Monitoreo de Red</h3>
+                     <p class="text-sm text-gray-400 mb-2">Segmentos adicionales (CIDR). Separar por comas.</p>
+                     <input id="swal-subnets" class="swal2-input w-full bg-slate-800 text-white border-slate-600 focus:border-indigo-500 font-mono text-sm" 
+                        placeholder="ej: 192.168.1.0/24, 10.0.0.0/8" value="${currentSubnets}">
+                     <p class="text-xs text-slate-500 mt-2"><i class="fas fa-info-circle mr-1"></i> El sistema ya escanea automáticamente tus interfaces locales.</p>
+                </div>
 
                 <!-- Backup Section -->
                 <div>
@@ -1471,23 +1579,30 @@ async function openSettings() {
         color: '#f8fafc',
         width: '600px',
         preConfirm: () => {
-            return document.getElementById('swal-input1').value;
+            return {
+                webhook: document.getElementById('swal-input1').value,
+                subnets: document.getElementById('swal-subnets').value
+            };
         }
     });
 
-    if (formValues !== undefined) {
-        // Save Webhook
+    if (formValues) {
+        // Save Webhook & Subnets
         try {
-            const res = await fetch(`${API_URL}/settings/webhook`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url: formValues })
-            });
-            if (res.ok) {
-                Toast.fire({ icon: 'success', title: 'Configuración guardada' });
-            } else {
-                Toast.fire({ icon: 'error', title: 'Error al guardar' });
-            }
+            await Promise.all([
+                fetch(`${API_URL}/settings/webhook`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: formValues.webhook })
+                }),
+                fetch(`${API_URL}/config/subnets`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ subnets: formValues.subnets })
+                })
+            ]);
+
+            Toast.fire({ icon: 'success', title: 'Configuración guardada' });
         } catch (e) {
             console.error(e);
             Toast.fire({ icon: 'error', title: 'Error de conexión' });
@@ -1507,12 +1622,37 @@ function confirmResetDB() {
         confirmButtonText: 'Sí, borrar todo',
         background: '#1e293b',
         color: '#fff'
-    }).then((result) => {
+    }).then(async (result) => {
         if (result.isConfirmed) {
-            // Call API to reset DB (Endpoint needed or manual clear)
-            // For now, imply manual action or implement endpoint later if requested. 
-            // Since user didn't ask for this specific feature but it is good UX in settings.
-            Toast.fire({ icon: 'info', title: 'Funcionalidad en desarrollo' });
+            try {
+                // Hacemos la llamada al backend real que acabamos de crear
+                const res = await fetch(`${API_URL}/admin/reset_db`, {
+                    method: 'POST'
+                });
+
+                if (res.ok) {
+                    await Swal.fire({
+                        title: '¡Borrado!',
+                        text: 'La base de datos ha sido reiniciada correctamente.',
+                        icon: 'success',
+                        background: '#1e293b',
+                        color: '#fff'
+                    });
+                    // Recargar para limpiar la vista
+                    window.location.reload();
+                } else {
+                    const err = await res.json();
+                    throw new Error(err.detail || 'Error desconocido');
+                }
+            } catch (e) {
+                Swal.fire({
+                    title: 'Error',
+                    text: 'No se pudo borrar la base de datos: ' + e.message,
+                    icon: 'error',
+                    background: '#1e293b',
+                    color: '#fff'
+                });
+            }
         }
     })
 }
@@ -1788,3 +1928,17 @@ function renderTopology(data) {
 fetchTopology();
 
 
+
+// --- GLOBAL EXPORTS FOR PYWEBVIEW ---
+window.switchView = switchView;
+window.triggerScan = triggerScan;
+window.openSettings = openSettings;
+window.fetchDevices = fetchDevices;
+window.confirmResetDB = confirmResetDB;
+window.toggleBlock = toggleBlock;
+window.showLogs = showLogs;
+window.backupConfig = backupConfig;
+window.restoreConfig = restoreConfig;
+window.updateStats = updateStats;
+window.renderDevices = renderDevices;
+if (typeof fetchTopology !== 'undefined') window.fetchTopology = fetchTopology;

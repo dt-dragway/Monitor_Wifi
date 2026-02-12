@@ -30,7 +30,6 @@ class SpeedTestResult(SQLModel, table=True):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     ping: float # ms
     download: float # Mbps
-    download: float # Mbps
     upload: float # Mbps
 
 class TrafficLog(SQLModel, table=True):
