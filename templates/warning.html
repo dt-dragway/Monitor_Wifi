@@ -4,127 +4,367 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ALERTA DE SEGURIDAD - INTRUSO DETECTADO</title>
+    <title>🛑 ALERTA CRÍTICA: SISTEMA COMPROMETIDO</title>
     <style>
+        :root {
+            --blood-red: #8b0000;
+            --bright-red: #ff0000;
+            --terminal-green: #00ff41;
+            --glitch-cyan: #00f3ff;
+            --glitch-magenta: #ff00ff;
+        }
+
+        @font-face {
+            font-family: 'Cyber';
+            src: url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+        }
+
         body {
             background-color: #000;
-            color: #ff0000;
-            font-family: 'Courier New', Courier, monospace;
-            text-align: center;
-            padding-top: 50px;
-            overflow: hidden;
+            color: var(--bright-red);
+            font-family: 'Share Tech Mono', 'Courier New', monospace;
             margin: 0;
+            padding: 0;
             height: 100vh;
+            overflow: hidden;
             display: flex;
             flex-direction: column;
             justify-content: center;
             align-items: center;
+            background-image:
+                radial-gradient(circle at center, rgba(139, 0, 0, 0.4) 0%, transparent 75%),
+                repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.2) 0px, rgba(0, 0, 0, 0.2) 1px, transparent 1px, transparent 2px);
+            background-size: 100% 100%, 100% 3px;
+            animation: bg-flicker 0.1s infinite;
         }
 
-        h1 {
-            font-size: 60px;
-            background: #ff0000;
-            color: #000;
-            padding: 10px 20px;
-            animation: blink 0.5s infinite;
+        /* Glitch Efecto RGB Split */
+        .glitch-wrapper {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            z-index: 10;
         }
 
-        .icon {
-            font-size: 150px;
+        .skull-container {
+            font-size: 140px;
             margin-bottom: 20px;
-            animation: pulse 1s infinite;
+            filter: drop-shadow(0 0 30px var(--bright-red));
+            animation: skull-glitch 3s infinite;
+            position: relative;
         }
 
-        p {
-            font-size: 24px;
-            max-width: 800px;
-            margin: 20px auto;
+        .skull-container::before,
+        .skull-container::after {
+            content: "☠️";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0.5;
         }
 
-        .info {
+        .skull-container::before {
+            color: var(--glitch-cyan);
+            left: -5px;
+            animation: glitch-offset 2s infinite;
+        }
+
+        .skull-container::after {
+            color: var(--glitch-magenta);
+            left: 5px;
+            animation: glitch-offset 1.5s infinite reverse;
+        }
+
+        .header-box {
+            background: var(--bright-red);
+            color: black;
+            padding: 20px 80px;
+            font-size: 3.5rem;
+            font-weight: 900;
+            text-transform: uppercase;
+            box-shadow: 0 0 60px var(--bright-red);
+            transform: skew(-15deg);
+            margin-bottom: 50px;
+            position: relative;
+            animation: intense-glitch 5s infinite;
+        }
+
+        .content-box {
+            max-width: 90%;
+            width: 650px;
+            text-align: center;
+            background: rgba(5, 0, 0, 0.95);
+            border: 2px solid var(--bright-red);
+            padding: 40px;
+            position: relative;
+            box-shadow: 0 0 40px rgba(255, 0, 0, 0.3), inset 0 0 20px rgba(255, 0, 0, 0.2);
+            overflow: hidden;
+        }
+
+        .content-box::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: var(--glitch-cyan);
+            animation: scanline-move 2s linear infinite;
+            opacity: 0.5;
+        }
+
+        h2 {
+            font-size: 1.4rem;
             color: #fff;
-            margin-top: 40px;
-            border: 1px solid #333;
-            padding: 20px;
-            background: #111;
+            margin-bottom: 25px;
+            letter-spacing: 3px;
+            text-shadow: 2px 2px var(--glitch-magenta), -2px -2px var(--glitch-cyan);
+            animation: text-flicker 4s infinite;
+        }
+
+        .warning-text {
+            font-size: 1.3rem;
+            line-height: 1.6;
+            margin: 20px 0;
+            color: #ff4d4d;
+            text-transform: uppercase;
+        }
+
+        .alert-bg {
+            color: white;
+            background: var(--bright-red);
+            padding: 0 8px;
+            display: inline-block;
+            animation: blink 0.5s step-end infinite;
+        }
+
+        .mac-notify {
+            font-size: 0.8rem;
+            color: var(--terminal-green);
+            margin-top: 35px;
+            border-top: 1px dashed #444;
+            padding-top: 25px;
+            font-family: monospace;
+            text-transform: uppercase;
+            background: rgba(0, 255, 65, 0.05);
+        }
+
+        /* Noise Background Layer */
+        .noise {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url('https://media.giphy.com/media/oEI9uWUqWMrBK/giphy.gif');
+            opacity: 0.03;
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        /* Animations */
+        @keyframes scanline-move {
+            0% {
+                top: -10%;
+            }
+
+            100% {
+                top: 110%;
+            }
+        }
+
+        @keyframes bg-flicker {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.98;
+            }
+        }
+
+        @keyframes skull-glitch {
+            0% {
+                transform: scale(1) translate(0);
+            }
+
+            10% {
+                transform: scale(1.1) translate(-5px, 5px) rotate(2deg);
+            }
+
+            11% {
+                transform: scale(1) translate(0);
+            }
+
+            30% {
+                transform: scale(0.95) translate(5px, -2px);
+            }
+
+            31% {
+                transform: scale(1) translate(0);
+            }
+
+            70% {
+                transform: scale(1.05) translate(-2px, -5px) skew(5deg);
+            }
+
+            71% {
+                transform: scale(1) translate(0);
+            }
+        }
+
+        @keyframes glitch-offset {
+
+            0%,
+            100% {
+                transform: translate(0);
+            }
+
+            20% {
+                transform: translate(-8px, 4px);
+            }
+
+            40% {
+                transform: translate(8px, -4px);
+            }
+
+            60% {
+                transform: translate(-4px, -2px);
+            }
+
+            80% {
+                transform: translate(4px, 2px);
+            }
+        }
+
+        @keyframes intense-glitch {
+
+            0%,
+            95%,
+            100% {
+                transform: skew(-15deg) scale(1);
+                filter: none;
+            }
+
+            96% {
+                transform: skew(10deg) scale(1.1) translate(-10px);
+                filter: hue-rotate(90deg);
+            }
+
+            97% {
+                transform: skew(-30deg) scale(0.9) translate(10px);
+                filter: invert(1);
+            }
+
+            98% {
+                transform: skew(5deg) scale(1.2);
+                filter: blur(2px);
+            }
         }
 
         @keyframes blink {
-            0% {
+
+            0%,
+            100% {
                 opacity: 1;
             }
 
             50% {
                 opacity: 0;
             }
-
-            100% {
-                opacity: 1;
-            }
         }
 
-        @keyframes pulse {
-            0% {
-                transform: scale(1);
+        @keyframes text-flicker {
+
+            0%,
+            100% {
+                opacity: 1;
+                text-shadow: 2px 2px var(--glitch-magenta), -2px -2px var(--glitch-cyan);
             }
 
             50% {
-                transform: scale(1.1);
+                opacity: 0.8;
+                text-shadow: none;
             }
 
-            100% {
-                transform: scale(1);
+            51% {
+                opacity: 1;
             }
         }
     </style>
 </head>
 
 <body>
-    <div class="icon">☠️</div>
-    <h1>ACCESO BLOQUEADO</h1>
-    <p><strong>ALERTA:</strong> Tu dispositivo ha sido identificado como una <strong>AMENAZA</strong> para esta red.</p>
-    <p>Se ha registrado tu dirección MAC y se notificará a las autoridades si persistes en el acceso no autorizado.</p>
+    <div class="noise"></div>
+    <div class="scanlines"></div>
 
-    <div class="info">
-        <p>IP Registrada: <span id="ip">DETECTANDO...</span></p>
-        <p>Sistema de Defensa Activo: <span style="color:red">NIVEL MÁXIMO</span></p>
+    <div class="glitch-wrapper">
+        <div class="skull-container">☠️</div>
+
+        <div class="header-box">
+            ACCESO BLOQUEADO
+        </div>
+
+        <div class="content-box">
+            <h2>ALERTA: DISPOSITIVO IDENTIFICADO COMO <span class="alert-bg">AMENAZA CRÍTICA</span></h2>
+
+            <p class="warning-text">Se ha registrado tu dirección MAC y serás <span
+                    style="font-weight: bold; text-decoration: underline;">HACKEADO</span> si persistes en el acceso no
+                autorizado.</p>
+
+            <div class="mac-notify">
+                > PROTOCOLO DE AISLAMIENTO: ACTIVO<br>
+                > REGISTRANDO TRÁFICO FORENSE (PCAP)...<br>
+                > IDENTIDAD VINCULADA AL HARDWARE ID
+            </div>
+        </div>
     </div>
 
-    <!-- Sonido molesto (Sirena) -->
-    <!-- Nota: Los navegadores modernos bloquean el autoplay, pero intentaremos -->
     <script>
-        document.getElementById('ip').innerText = window.location.hostname || "DESCONOCIDO";
+        // Efecto visual de sacudida muy agresiva e irregular
+        function triggerGlitch() {
+            const intensity = 30;
+            document.body.style.transform = `translate(${Math.random() * intensity - intensity / 2}px, ${Math.random() * intensity - intensity / 2}px)`;
+            setTimeout(() => {
+                document.body.style.transform = 'none';
+            }, 30 + Math.random() * 50);
 
-        // Simular sonido
-        const context = new (window.AudioContext || window.webkitAudioContext)();
-        function playSiren() {
-            const osc = context.createOscillator();
-            const gain = context.createGain();
-            osc.connect(gain);
-            gain.connect(context.destination);
-            osc.type = 'sawtooth';
-            osc.frequency.value = 500;
-            gain.gain.value = 0.5;
-
-            osc.start();
-            let up = true;
-            setInterval(() => {
-                const freq = osc.frequency.value;
-                if (up) osc.frequency.value += 10;
-                else osc.frequency.value -= 10;
-
-                if (freq > 1000) up = false;
-                if (freq < 500) up = true;
-            }, 10);
+            // Programar el siguiente glitch de forma aleatoria
+            setTimeout(triggerGlitch, 1000 + Math.random() * 3000);
         }
+        triggerGlitch();
 
-        document.body.addEventListener('click', () => {
-            playSiren();
-            document.body.requestFullscreen();
+        // Sonido de estática aleatorio (opcional, requiere interacción pero asusta mucho)
+        window.addEventListener('click', () => {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const bufferSize = 2 * audioCtx.sampleRate;
+            const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const output = noiseBuffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                output[i] = Math.random() * 2 - 1;
+            }
+            const whiteNoise = audioCtx.createBufferSource();
+            whiteNoise.buffer = noiseBuffer;
+            whiteNoise.loop = true;
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.value = 400;
+            whiteNoise.connect(filter);
+            filter.connect(audioCtx.destination);
+            whiteNoise.start();
+            setTimeout(() => whiteNoise.stop(), 200);
         });
 
-        // Intentar autoplay (puede fallar sin interaccion)
-        setTimeout(playSiren, 1000);
+        // Título dinámico
+        setInterval(() => {
+            const states = ["🛑 ERROR", "☠️ PELIGRO", "⚠️ HACKED", "� ALERTA"];
+            document.title = states[Math.floor(Math.random() * states.length)];
+        }, 200);
     </script>
 </body>
 

@@ -94,45 +94,46 @@ async function fetchTrafficStats() {
     try {
         const res = await fetch(`${API_URL}/traffic`);
         if (res.ok) {
-            trafficStats = await res.json();
+            const data = await res.json();
+            trafficStats = data.devices || {};
+            const appData = data.apps || {};
 
-            // --- REAL-TIME NETWORK SPEED CALCULATION ---
+            // --- REAL-TIME NETWORK SPEED FROM BACKEND ---
+            const mbps = (data.global_throughput_bps || 0) / 1000000;
+            const speedEl = document.getElementById('dashboard-speed');
+            if (speedEl) {
+                // Si la velocidad es mayor a 0, mostramos con 2 decimales, si no un "0.00"
+                speedEl.innerText = mbps > 0.01 ? mbps.toFixed(2) : "0.00";
+
+                // Efecto visual: si hay tráfico, pulsa el icono
+                const speedIcon = speedEl.closest('.glass-card')?.querySelector('.fas.fa-rocket');
+                if (speedIcon) {
+                    if (mbps > 0.5) speedIcon.classList.add('animate-bounce');
+                    else speedIcon.classList.remove('animate-bounce');
+                }
+            }
+
+            // Per-Device Speed Calculation (Still useful for device list)
             const now = Date.now();
-            let currentTotalBytes = 0;
-            const timeDiff = (now - lastTrafficTime) / 1000; // seconds
-
-            // Calculate per-device and global total
+            const timeDiff = (now - lastTrafficTime) / 1000;
             Object.entries(trafficStats).forEach(([mac, s]) => {
-                const total = (s.down || 0) + (s.up || 0);
-                currentTotalBytes += total;
-
-                // Per-Device Speed Calculation
                 const macLower = mac.toLowerCase();
-                const lastBytes = lastDeviceBytes[macLower]; // undefined on first run
+                const total = (s.down || 0) + (s.up || 0);
+                const lastBytes = lastDeviceBytes[macLower];
 
                 if (lastTrafficTime > 0 && lastBytes !== undefined) {
                     const diff = total - lastBytes;
                     if (diff >= 0 && timeDiff > 0) {
-                        const mbps = ((diff * 8) / 1000000) / timeDiff;
-                        deviceSpeeds[macLower] = mbps;
+                        deviceSpeeds[macLower] = ((diff * 8) / 1000000) / timeDiff;
                     }
                 }
                 lastDeviceBytes[macLower] = total;
             });
 
-            // Global Speed Calculation
-            if (lastTrafficTime > 0 && lastTotalBytes > 0) {
-                const bytesDiff = currentTotalBytes - lastTotalBytes;
-
-                if (timeDiff > 0 && bytesDiff >= 0) {
-                    const mbps = ((bytesDiff * 8) / 1000000) / timeDiff;
-                    const speedEl = document.getElementById('dashboard-speed');
-                    if (speedEl) speedEl.innerText = mbps.toFixed(2);
-                }
-            }
-
-            lastTotalBytes = currentTotalBytes;
             lastTrafficTime = now;
+
+            // --- APP DISTRIBUTION CHART ---
+            updateAppsChart(appData);
 
             // Re-render only if current view depends on it
             if (currentView === 'dashboard') updateDashboardData(allDevices);
@@ -141,10 +142,79 @@ async function fetchTrafficStats() {
     } catch (e) { console.error("Traffic fetch error", e); }
 }
 
-// Monitoring Loop
-setInterval(() => {
+let appsChart = null;
+function updateAppsChart(appData) {
+    const ctx = document.getElementById('appsChart');
+    if (!ctx) return;
+
+    // Consolidate per-app totals across ALL devices
+    const totals = {};
+    Object.values(appData).forEach(devApps => {
+        Object.entries(devApps).forEach(([app, bytes]) => {
+            totals[app] = (totals[app] || 0) + bytes;
+        });
+    });
+
+    const labels = Object.keys(totals);
+    const chartData = Object.values(totals).map(b => (b / (1024 * 1024)).toFixed(2)); // MBs
+
+    if (!appsChart) {
+        appsChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: chartData,
+                    backgroundColor: [
+                        '#ef4444', '#22c55e', '#3b82f6', '#eab308',
+                        '#8b5cf6', '#ec4899', '#06b6d4', '#475569'
+                    ],
+                    borderWidth: 0,
+                    hoverOffset: 10
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            color: '#94a3b8',
+                            boxWidth: 8,
+                            font: { size: 9 },
+                            padding: 10
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: (item) => `${item.label}: ${item.raw} MB`
+                        }
+                    }
+                },
+                cutout: '70%',
+                layout: {
+                    padding: 0
+                }
+            }
+        });
+    } else {
+        appsChart.data.labels = labels;
+        appsChart.data.datasets[0].data = chartData;
+        appsChart.update('none'); // silent update
+    }
+}
+
+// Monitoring Loop - Ultra Fluid (Smart throttling)
+let monitoringInterval = setInterval(() => {
     fetchTrafficStats();
-    if (currentView === 'dashboard') fetchRecentActivity();
+    // Only fetch activity if dashboard is visible to save resources
+    if (currentView === 'dashboard') {
+        const dashboardView = document.getElementById('view-dashboard');
+        if (!dashboardView.classList.contains('hidden')) {
+            fetchRecentActivity();
+        }
+    }
 }, 1000);
 fetchTrafficStats();
 fetchRecentActivity();
@@ -200,35 +270,33 @@ function switchView(viewName) {
         console.warn("Storage write failed", e);
     }
 
-    // Hide all views
-    document.querySelectorAll('.view-section').forEach(el => el.classList.add('hidden'));
+    // Hide all views with a transition-friendly approach
+    document.querySelectorAll('.view-section').forEach(el => {
+        el.classList.add('hidden');
+        el.style.opacity = '0';
+    });
 
     // Deactivate nav items
-    document.querySelectorAll('.nav-item').forEach(el => {
-        el.classList.remove('bg-white/5', 'text-white', 'shadow-inner');
-        el.classList.add('text-slate-400');
-    });
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
 
     // Show target view
     const target = document.getElementById(`view-${viewName}`);
     if (target) {
         target.classList.remove('hidden');
-        target.classList.add('animate-fade-in');
+        // Let the CSS animation handle the rest (view-section class has it)
     }
 
     // Activate nav item
     const nav = document.getElementById(`nav-${viewName}`);
-    if (nav) {
-        nav.classList.add('bg-white/5', 'text-white', 'shadow-inner');
-        nav.classList.remove('text-slate-400');
-    }
+    if (nav) nav.classList.add('active');
 
     currentView = viewName;
     const titles = {
         'dashboard': 'Resumen General',
         'devices': 'Gestión de Dispositivos',
         'map': 'Mapa de Red',
-        'speedtest': 'Monitor de Velocidad'
+        'speedtest': 'Monitor de Velocidad',
+        'security': 'Centro de Ciberseguridad'
     };
     if (document.getElementById('page-title')) document.getElementById('page-title').innerText = titles[viewName] || 'Dashboard';
 
@@ -239,6 +307,15 @@ function switchView(viewName) {
     }
     if (viewName === 'map') fetchTopology();
     if (viewName === 'devices') renderDevices(allDevices);
+    if (viewName === 'security') {
+        fetchAuditSummary();
+        fetchVulnerabilityHistory();
+        fetchRecentSecurityAlarms();
+        fetchCaptures();
+        updateRogueAPStatus();
+        fetchCredentials();
+        updateDNSStatus();
+    }
 }
 
 // Ensure defaults with persistence
@@ -343,9 +420,23 @@ window.updateStats = function (devices) {
 
     // Sort logic using ALL devices (Online + Offline) to ensure persistence
     // Filter talkers: Must have > 0 traffic in sourceStats
+    // Sort logic: first by Live Speed, then by total monthly consumption
     const activeTalkers = devices
-        .filter(d => getTotal(d.mac) > 0)
-        .sort((a, b) => getTotal(b.mac) - getTotal(a.mac));
+        .filter(d => {
+            const val = getTotal(d.mac);
+            const liveSpeed = deviceSpeeds[d.mac ? d.mac.toLowerCase() : ''] || 0;
+            if (val <= 0 && liveSpeed <= 0) return false;
+            if (d.status === 'offline' && (d.alias || '').includes('Sniffer')) return false;
+            return true;
+        })
+        .sort((a, b) => {
+            const speedA = deviceSpeeds[a.mac ? a.mac.toLowerCase() : ''] || 0;
+            const speedB = deviceSpeeds[b.mac ? b.mac.toLowerCase() : ''] || 0;
+            // Si hay tráfico en tiempo real, priorizar por velocidad
+            if (speedA > 0.05 || speedB > 0.05) return speedB - speedA;
+            // Si no, por consumo total mensual
+            return getTotal(b.mac) - getTotal(a.mac);
+        });
 
     const totalTalkers = activeTalkers.length;
     const totalPages = Math.ceil(totalTalkers / itemsPerPage) || 1;
@@ -380,14 +471,17 @@ window.updateStats = function (devices) {
             const isOffline = d.status === 'offline';
             const offlineClass = isOffline ? 'opacity-60 grayscale' : '';
 
-            // Real time speed
             const speedMbps = deviceSpeeds[d.mac ? d.mac.toLowerCase() : ''] || 0;
             let speedHtml = '';
-            if (speedMbps > 0.01) { // Filter noise
+            if (speedMbps > 0.01) {
                 const speedText = speedMbps < 1 ?
-                    `${(speedMbps * 1000).toFixed(0)} Kbps` :
-                    `${speedMbps.toFixed(1)} Mbps`;
-                speedHtml = `<span class="text-[10px] text-emerald-400 font-mono animate-pulse mr-2">↓${speedText}</span>`;
+                    `${(speedMbps * 1000).toFixed(1)} KB/s` :
+                    `${speedMbps.toFixed(2)} Mbps`;
+                speedHtml = `
+                    <div class="flex items-center gap-1 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 mr-2 animate-pulse">
+                        <span class="w-1 h-1 rounded-full bg-emerald-500"></span>
+                        <span class="text-[9px] text-emerald-400 font-mono font-bold">${speedText}</span>
+                    </div>`;
             }
 
             const item = document.createElement('div');
@@ -466,18 +560,15 @@ function updateTabsUI() {
         if (!btn) return;
 
         if (t === currentTab) {
-            // Active Styles based on type
-            let colorClass = "bg-blue-600 shadow-blue-500/50"; // Default All
-            if (t === 'intruder') colorClass = "bg-red-600 shadow-red-500/50";
-            if (t === 'trusted') colorClass = "bg-emerald-600 shadow-emerald-500/50";
-            if (t === 'blocked') colorClass = "bg-slate-700 border border-red-500/30 text-red-400";
-            if (t === 'offline') colorClass = "bg-slate-600";
+            let colorClass = "bg-blue-600 shadow-lg shadow-blue-500/30";
+            if (t === 'intruder') colorClass = "bg-rose-600 shadow-lg shadow-rose-500/30";
+            if (t === 'trusted') colorClass = "bg-emerald-600 shadow-lg shadow-emerald-500/30";
+            if (t === 'blocked') colorClass = "bg-slate-700 border border-rose-500/30 text-rose-400 font-black";
+            if (t === 'offline') colorClass = "bg-slate-700 text-slate-300";
 
-            btn.className = `px-4 py-1.5 rounded-md text-sm font-bold transition-all text-white shadow-lg transform scale-105 ${colorClass}`;
-            // Ensure no conflicting hover classes
+            btn.className = `tab-btn px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all text-white transform scale-105 z-10 ${colorClass}`;
         } else {
-            // Inactive Styles
-            btn.className = "px-4 py-1.5 rounded-md text-sm font-medium transition-all text-slate-400 hover:text-white hover:bg-white/5";
+            btn.className = "tab-btn px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all text-slate-500 hover:text-white hover:bg-white/5";
         }
     });
 
@@ -607,8 +698,14 @@ function renderDevices(devices) {
         return;
     }
 
-    // Helper to get traffic
-    const getTraffic = (mac) => trafficStats[mac] || { down: 0, up: 0 };
+    // Helper to get traffic (Case-insensitive match)
+    const getTraffic = (mac) => {
+        if (!mac) return { down: 0, up: 0 };
+        const macLower = mac.toLowerCase();
+        // Look for the match in the trafficStats keys
+        const matchKey = Object.keys(trafficStats).find(k => k.toLowerCase() === macLower);
+        return matchKey ? trafficStats[matchKey] : { down: 0, up: 0 };
+    };
 
     // Mark current children
     const currentIds = Array.from(list.children).map(c => c.id).filter(id => id);
@@ -641,6 +738,9 @@ function renderDevices(devices) {
                 'border-slate-700/30 hover:border-slate-500/30';
 
         const cardId = `device-${device.mac}`;
+        const macLower = device.mac.toLowerCase();
+        const speed = deviceSpeeds[macLower] || 0; // In Mbps
+
         let item = document.getElementById(cardId);
 
         const innerHTML = `
@@ -666,15 +766,19 @@ function renderDevices(devices) {
                 </div>
             </div>
 
-            <!-- Traffic Stats -->
-            <div class="hidden lg:flex w-48 px-4 border-l border-r border-white/5 mx-6 opacity-80 group-hover:opacity-100 transition-opacity flex-col justify-center gap-1">
-                 <div class="flex justify-between text-[10px] font-mono text-slate-400">
-                    <span><i class="fas fa-arrow-down text-blue-500 mr-1"></i>${formatBytes(tStats.down)}</span>
-                    <span><i class="fas fa-arrow-up text-green-500 mr-1"></i>${formatBytes(tStats.up)}</span>
+            <!-- Traffic Stats & LIVE SPEED -->
+            <div class="hidden lg:flex w-64 px-4 border-l border-r border-white/5 mx-6 opacity-80 group-hover:opacity-100 transition-opacity flex-col justify-center gap-1">
+                 <div class="flex justify-between text-[10px] font-mono mb-1">
+                    <span class="text-blue-400">⬇️ ${formatBytes(tStats.down)}</span>
+                    <span class="text-green-400">⬆️ ${formatBytes(tStats.up)}</span>
                 </div>
-                <div class="w-full bg-slate-800/50 rounded-full h-1 flex overflow-hidden">
-                     <div class="bg-blue-500 h-full" style="width: 50%"></div>
-                     <div class="bg-green-500 h-full" style="width: 50%"></div>
+                <div class="w-full bg-slate-800/50 rounded-full h-1.5 flex overflow-hidden mb-1">
+                     <div class="bg-blue-500 h-full transition-all duration-500 ${speed > 0.1 ? 'animate-pulse' : ''}" style="width: ${Math.min(100, (tStats.down / (tStats.down + tStats.up + 1)) * 100)}%"></div>
+                     <div class="bg-green-500 h-full transition-all duration-500" style="width: ${Math.min(100, (tStats.up / (tStats.down + tStats.up + 1)) * 100)}%"></div>
+                </div>
+                <div class="text-[10px] text-center font-bold text-slate-400 flex items-center justify-center gap-2">
+                    <i class="fas fa-wave-square ${speed > 0.01 ? 'text-blue-500' : 'opacity-20'}"></i>
+                    <span class="${speed > 0.01 ? 'text-blue-300' : ''}">${speed > 0 ? speed.toFixed(2) + ' Mbps' : 'En reposo'}</span>
                 </div>
             </div>
             
@@ -714,24 +818,14 @@ function renderDevices(devices) {
             </div>`;
 
         if (!item) {
-            // Create new
             item = document.createElement('div');
             item.id = cardId;
-            item.className = `p-4 rounded-xl border backdrop-blur-sm transition-all hover:scale-[1.01] ${statusClass} ${statusBorder} flex flex-col md:flex-row justify-between items-center mb-3 relative overflow-hidden group`;
+            item.className = `p-5 rounded-2xl glass-card border ${statusBorder} flex flex-col md:flex-row justify-between items-center mb-4 relative overflow-hidden group`;
             item.innerHTML = innerHTML;
             list.appendChild(item);
         } else {
-            // Update existing
-            // Only update className and innerHTML if changed to save DOM (simplified: just update)
-            // Actually, updating innerHTML destroys event listeners if any were added via split code, but we use inline onclicks
-            // To avoid "jump", we update properties.
-            item.className = `p-4 rounded-xl border backdrop-blur-sm transition-all hover:scale-[1.01] ${statusClass} ${statusBorder} flex flex-col md:flex-row justify-between items-center mb-3 relative overflow-hidden group`;
-            // Check if innerHTML needs update? (Comparing large strings is expensive, maybe just write it)
-            // To be super smooth, we could check. But writing innerHTML is fast enough if not recreating node.
+            item.className = `p-5 rounded-2xl glass-card border ${statusBorder} flex flex-col md:flex-row justify-between items-center mb-4 relative overflow-hidden group`;
             if (item.innerHTML !== innerHTML) item.innerHTML = innerHTML;
-
-            // Ensure order: if item is not the last child, or correct index?
-            // Just appending moves it to end. If we iterate in order, this effectively sorts the DOM.
             list.appendChild(item);
         }
     });
@@ -1123,6 +1217,10 @@ async function triggerAudit(ip) {
             width: '600px'
         });
 
+        // Refrescar vistas de seguridad si están abiertas
+        if (typeof fetchVulnerabilityHistory === 'function') fetchVulnerabilityHistory();
+        if (typeof fetchAuditSummary === 'function') fetchAuditSummary();
+
     } catch (e) {
         Swal.fire({
             title: 'Error de Conexión',
@@ -1383,15 +1481,550 @@ async function showLogs() {
     });
 }
 
-// Initial Load
-// Assuming fetchTrafficStats() is defined elsewhere or will be added.
-// fetchTrafficStats();
-// fetchRecentActivity(); // This will be called by the interval if currentView is dashboard
+// --- CREDENTIALS STORE ---
+async function fetchCredentials() {
+    const list = document.getElementById('credential-list');
+    if (!list) return;
 
-// Loop
-// Assuming currentView is defined globally or accessible.
-// setInterval(() => {
-//     fetchTrafficStats();
+    try {
+        const res = await fetch(`${API_URL}/security/credentials`);
+        const creds = await res.json();
+
+        if (creds.length === 0) {
+            list.innerHTML = '<p class="text-slate-500 text-sm italic text-center col-span-full py-5">No se han interceptado credenciales aún.</p>';
+            return;
+        }
+
+        list.innerHTML = creds.map(c => {
+            const date = new Date(c.timestamp + (c.timestamp.includes('Z') ? '' : 'Z')).toLocaleTimeString();
+            return `
+                <div class="p-4 bg-slate-900/80 rounded-xl border border-yellow-500/20 hover:border-yellow-500/50 transition-all group relative overflow-hidden">
+                    <div class="absolute -right-2 -top-2 opacity-10 group-hover:opacity-20 transition-opacity">
+                        <i class="fas fa-key text-6xl"></i>
+                    </div>
+                    <div class="flex justify-between items-center mb-3">
+                        <span class="px-2 py-0.5 rounded bg-yellow-500/10 text-yellow-500 text-[10px] font-bold uppercase">${c.protocol}</span>
+                        <span class="text-[10px] text-slate-500 font-mono">${date}</span>
+                    </div>
+                    <div class="space-y-2 relative z-10">
+                        <div class="flex items-center gap-2">
+                            <i class="fas fa-user-circle text-slate-400 text-xs"></i>
+                            <span class="text-xs text-white font-bold truncate">${c.username}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <i class="fas fa-lock text-slate-400 text-xs"></i>
+                            <span class="text-xs text-yellow-400 font-mono font-bold blur-[2px] hover:blur-none transition-all cursor-help" title="Click para ver">${c.password}</span>
+                        </div>
+                    </div>
+                    <div class="mt-4 pt-2 border-t border-white/5">
+                        <p class="text-[9px] text-slate-500 truncate"><i class="fas fa-globe mr-1"></i>${c.hostname || 'Desconocido'}</p>
+                        <p class="text-[9px] text-slate-400 mt-1"><i class="fas fa-desktop mr-1"></i>IP: ${c.ip}</p>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    } catch (e) { console.error("Error fetching credentials", e); }
+}
+
+window.fetchCredentials = fetchCredentials;
+
+// --- GLOBAL SCANNER LOGIC ---
+async function runGlobalScan() {
+    const { value: cidr } = await Swal.fire({
+        title: 'Escaneo de Red Global',
+        text: 'Introduce el rango de red (CIDR) o deja en blanco para auto-detectar.',
+        input: 'text',
+        inputPlaceholder: 'ej: 192.168.1.0/24',
+        showCancelButton: true,
+        confirmButtonText: '🚀 Iniciar Escaneo Masivo',
+        background: '#0f172a',
+        color: '#fff',
+        confirmButtonColor: '#2563eb'
+    });
+
+    if (cidr === undefined) return; // Cancelado
+
+    Swal.fire({
+        title: 'Escaneando Superficie de Ataque...',
+        html: `
+            <div class="space-y-4">
+                <div class="flex justify-center">
+                    <div class="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                </div>
+                <p class="text-slate-400 animate-pulse text-sm">Nmap está analizando toda la subred en busca de servicios críticos expuestos... Esto puede tardar hasta 40 segundos.</p>
+            </div>
+        `,
+        allowOutsideClick: false,
+        showConfirmButton: false,
+        background: '#0f172a',
+        color: '#fff'
+    });
+
+    try {
+        const res = await fetch(`${API_URL}/security/scan_subnet?cidr=${encodeURIComponent(cidr || '')}`, { method: 'POST' });
+        const result = await res.json();
+
+        if (result.error) throw new Error(result.error);
+
+        const hostCount = result.hosts ? result.hosts.length : 0;
+
+        let reportHtml = `
+            <div class="text-left space-y-4 max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
+                <p class="text-emerald-400 font-bold"><i class="fas fa-check-circle mr-2"></i>Escaneo completado en ${result.cidr}</p>
+                <p class="text-slate-500 text-xs">Se encontraron ${hostCount} dispositivos con servicios abiertos de interés.</p>
+                <div class="space-y-3">
+        `;
+
+        if (hostCount === 0) {
+            reportHtml += '<p class="text-center py-10 text-slate-500 italic">No se encontraron servicios críticos expuestos en los puertos comunes.</p>';
+        } else {
+            result.hosts.forEach(h => {
+                reportHtml += `
+                    <div class="p-3 bg-slate-800 rounded-lg border border-slate-700">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-blue-400 font-mono font-bold">${h.ip}</span>
+                            <span class="text-[10px] text-slate-500 font-mono">${h.mac}</span>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            ${h.services.map(s => `
+                                <span class="px-2 py-0.5 rounded bg-blue-500/10 text-blue-400 text-[10px] border border-blue-500/20">
+                                    <i class="fas fa-plug mr-1"></i>${s.port}/${s.name}
+                                </span>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        reportHtml += '</div></div>';
+
+        Swal.fire({
+            title: 'Reporte de Superficie de Ataque',
+            html: reportHtml,
+            confirmButtonText: 'Entendido',
+            background: '#0f172a',
+            color: '#fff',
+            width: '600px'
+        });
+
+    } catch (e) {
+        Swal.fire({ icon: 'error', title: 'Error en Escaneo', text: e.message, background: '#0f172a', color: '#fff' });
+    }
+}
+
+window.runGlobalScan = runGlobalScan;
+
+// --- DNS SPOOFER LOGIC ---
+let dnsSpoofActive = false;
+
+async function updateDNSStatus() {
+    try {
+        const res = await fetch(`${API_URL}/security/dns_spoof/status`);
+        const status = await res.json();
+        dnsSpoofActive = status.active;
+
+        const btn = document.getElementById('btn-toggle-dns');
+        const icon = document.getElementById('dns-spoof-icon');
+        const text = document.getElementById('dns-spoof-status-text');
+
+        if (dnsSpoofActive) {
+            btn.innerHTML = '<i class="fas fa-stop mr-2"></i> Detener Spoofing';
+            btn.className = "px-6 py-3 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold transition-all animate-pulse";
+            icon.className = "p-4 rounded-xl bg-cyan-500/10 text-orange-400";
+            const rules = Object.keys(status.rules).map(d => `${d}→${status.rules[d]}`).join(', ');
+            text.innerHTML = `<span class="text-orange-400 font-bold">ACTIVO: ${rules}</span>`;
+        } else {
+            btn.innerHTML = '<i class="fas fa-crosshairs mr-2"></i> Iniciar Spoofing';
+            btn.className = "px-6 py-3 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold transition-all shadow-lg shadow-cyan-900/20";
+            icon.className = "p-4 rounded-xl bg-cyan-500/10 text-cyan-400";
+            text.innerText = "Redirige dominios específicos (ej: facebook.com) a cualquier IP.";
+        }
+    } catch (e) { console.error(e); }
+}
+
+async function toggleDNSSpoof() {
+    if (dnsSpoofActive) {
+        try {
+            await fetch(`${API_URL}/security/dns_spoof/stop`, { method: 'POST' });
+            Toast.fire({ icon: 'info', title: 'DNS Spoofing desactivado' });
+            updateDNSStatus();
+        } catch (e) { console.error(e); }
+    } else {
+        // Obtener info de ataque para pre-llenar
+        let attackInfo = { local_ip: '10.0.0.1' };
+        try {
+            const res = await fetch(`${API_URL}/security/attack_info`);
+            attackInfo = await res.json();
+        } catch (e) { }
+
+        const { value: formValues } = await Swal.fire({
+            title: '<i class="fas fa-bullseye mr-2 text-cyan-400"></i>Configurar Ataque DNS',
+            html: `
+                <div class="text-left space-y-5 p-2">
+                    <div class="bg-blue-500/10 border border-blue-500/20 p-3 rounded-xl mb-4">
+                        <p class="text-[11px] text-blue-300 leading-relaxed">
+                            <i class="fas fa-magic mr-1"></i> <b>Modo Inteligente:</b> Escribe un dominio para interceptarlo o usa las plantillas de abajo.
+                        </p>
+                    </div>
+
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Dominio a Suplantar</label>
+                        <div class="relative">
+                            <input id="dns-domain" class="w-full bg-slate-900/80 border border-white/10 rounded-xl p-3 text-white font-mono text-sm focus:border-cyan-500/50 outline-none transition-all" placeholder="ej: google.com">
+                            <div class="flex flex-wrap gap-2 mt-2">
+                                <button onclick="document.getElementById('dns-domain').value='facebook.com'" class="text-[9px] bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded border border-white/5 text-slate-400">Facebook</button>
+                                <button onclick="document.getElementById('dns-domain').value='google.com'" class="text-[9px] bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded border border-white/5 text-slate-400">Google</button>
+                                <button onclick="document.getElementById('dns-domain').value='netflix.com'" class="text-[9px] bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded border border-white/5 text-slate-400">Netflix</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">IP de Redirección (Donde enviarlos)</label>
+                        <div class="flex gap-2">
+                            <input id="dns-target" class="flex-1 bg-slate-900/80 border border-white/10 rounded-xl p-3 text-white font-mono text-sm focus:border-cyan-500/50 outline-none transition-all" value="${attackInfo.local_ip}">
+                            <button onclick="document.getElementById('dns-target').value='${attackInfo.local_ip}'" class="px-3 bg-cyan-600/20 text-cyan-400 rounded-xl border border-cyan-500/30 text-xs hover:bg-cyan-600 hover:text-white transition-all" title="Usar mi IP de NetGuard">
+                                <i class="fas fa-home"></i> Mi IP
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="bg-amber-500/10 border border-amber-500/20 p-3 rounded-xl">
+                        <p class="text-[10px] text-amber-200 lg:text-center italic">
+                            <i class="fas fa-info-circle mr-1"></i> Los dispositivos redirigidos verán tu página de "Alerta de Seguridad" si usas tu propia IP.
+                        </p>
+                    </div>
+                </div>
+            `,
+            showCancelButton: true,
+            confirmButtonText: 'Lanzar Ataque Táctico',
+            confirmButtonColor: '#0891b2',
+            background: '#0f172a',
+            color: '#fff',
+            customClass: {
+                popup: 'rounded-[1.5rem] border border-white/10 shadow-2xl backdrop-blur-xl',
+                confirmButton: 'rounded-xl px-8 py-3 text-sm font-black uppercase tracking-widest',
+                cancelButton: 'rounded-xl px-8 py-3 text-sm font-bold opacity-70'
+            },
+            preConfirm: () => {
+                const dom = document.getElementById('dns-domain').value;
+                const tar = document.getElementById('dns-target').value;
+                if (!dom || !tar) {
+                    Swal.showValidationMessage('Ambos campos son obligatorios');
+                    return false;
+                }
+                return { domain: dom, target: tar }
+            }
+        });
+
+        if (formValues && formValues.domain && formValues.target) {
+            try {
+                const res = await fetch(`${API_URL}/security/dns_spoof/start?domain=${encodeURIComponent(formValues.domain)}&target=${encodeURIComponent(formValues.target)}`, { method: 'POST' });
+                const result = await res.json();
+                if (result.success) {
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'Ataque DNS Lanzado 🎯',
+                        text: `Interceptando ${formValues.domain}. Redirección a ${formValues.target}`,
+                        background: '#0f172a',
+                        color: '#fff',
+                        customClass: { popup: 'rounded-2xl border border-emerald-500/30' }
+                    });
+                }
+                updateDNSStatus();
+            } catch (e) { console.error(e); }
+        }
+    }
+}
+
+window.toggleDNSSpoof = toggleDNSSpoof;
+
+// --- ROGUE AP (EVIL TWIN) LOGIC ---
+let rogueAPActive = false;
+
+async function updateRogueAPStatus() {
+    try {
+        const res = await fetch(`${API_URL}/security/rogue_ap/status`);
+        const status = await res.json();
+        rogueAPActive = status.active;
+
+        const btn = document.getElementById('btn-start-rogue');
+        const icon = document.getElementById('rogue-ap-icon');
+        const text = document.getElementById('rogue-ap-status-text');
+
+        if (rogueAPActive) {
+            btn.innerHTML = '<i class="fas fa-stop mr-2"></i> Detener Evil Twin';
+            btn.className = "px-6 py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold transition-all animate-pulse";
+            icon.className = "p-4 rounded-xl bg-red-500/10 text-red-500";
+            text.innerHTML = `<span class="text-red-400 font-bold">ACTIVO: Emitiendo como "${status.ssid}" en ${status.interface}</span>`;
+        } else {
+            btn.innerHTML = '<i class="fas fa-play mr-2"></i> Iniciar Evil Twin';
+            btn.className = "px-6 py-3 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold transition-all shadow-lg shadow-purple-900/20";
+            icon.className = "p-4 rounded-xl bg-purple-500/10 text-purple-400";
+            text.innerText = "Crea una red WiFi trampa para capturar tráfico de víctimas.";
+        }
+    } catch (e) { console.error(e); }
+}
+
+async function toggleRogueAP() {
+    if (rogueAPActive) {
+        // Stop
+        try {
+            await fetch(`${API_URL}/security/rogue_ap/stop`, { method: 'POST' });
+            Toast.fire({ icon: 'info', title: 'Evil Twin detenido' });
+            updateRogueAPStatus();
+        } catch (e) { Toast.fire({ icon: 'error', title: 'Error al detener AP' }); }
+    } else {
+        // Obtener info de interfaces para ayudar al usuario
+        let attackInfo = { default_interface: 'wlan1' };
+        try {
+            const res = await fetch(`${API_URL}/security/attack_info`);
+            attackInfo = await res.json();
+        } catch (e) { }
+
+        const { value: formValues } = await Swal.fire({
+            title: '<i class="fas fa-broadcast-tower mr-2 text-purple-400"></i>Configurar Evil Twin',
+            html: `
+                <div class="text-left space-y-5 p-2">
+                    <div class="bg-purple-500/10 border border-purple-500/20 p-3 rounded-xl mb-4">
+                        <p class="text-[11px] text-purple-200 leading-relaxed">
+                            <i class="fas fa-satellite-dish mr-1"></i> <b>Objetivo:</b> Crea un punto de acceso abierto. Los que se conecten pasarán por tu control.
+                        </p>
+                    </div>
+
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Nombre de Red (SSID)</label>
+                        <input id="ap-ssid" class="w-full bg-slate-900/80 border border-white/10 rounded-xl p-3 text-white font-bold focus:border-purple-500/50 outline-none transition-all" value="FREE_WIFI_PUBLIC" placeholder="ej: STARBUCKS_FREE">
+                    </div>
+
+                    <div>
+                        <label class="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2">Tarjeta WiFi (Modo Monitor)</label>
+                        <div class="relative">
+                            <input id="ap-iface" class="w-full bg-slate-900/80 border border-white/10 rounded-xl p-3 text-white font-mono text-sm focus:border-purple-500/50 outline-none transition-all" value="${attackInfo.default_interface}">
+                            <div class="mt-2 flex items-center gap-2">
+                                <span class="text-[9px] text-slate-500">Detectada:</span>
+                                <span class="text-[9px] bg-slate-800 text-purple-400 px-2 py-0.5 rounded border border-white/5">${attackInfo.default_interface}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="bg-amber-500/10 border border-amber-500/20 p-3 rounded-xl">
+                        <p class="text-[10px] text-amber-200 lg:text-center italic font-medium leading-tight">
+                            <i class="fas fa-microchip mr-1"></i> NetGuard iniciará automáticamente un <b>Sniffer de Credenciales</b> en esta red.
+                        </p>
+                    </div>
+                </div>
+            `,
+            showCancelButton: true,
+            confirmButtonText: 'Lanzar Punto de Acceso',
+            confirmButtonColor: '#9333ea',
+            background: '#0f172a',
+            color: '#fff',
+            customClass: {
+                popup: 'rounded-[1.5rem] border border-white/10 shadow-2xl backdrop-blur-xl',
+                confirmButton: 'rounded-xl px-8 py-3 text-sm font-black uppercase tracking-widest',
+                cancelButton: 'rounded-xl px-8 py-3 text-sm font-bold opacity-70'
+            },
+            preConfirm: () => {
+                return {
+                    ssid: document.getElementById('ap-ssid').value,
+                    interface: document.getElementById('ap-iface').value
+                }
+            }
+        });
+
+        if (formValues) {
+            Toast.fire({ icon: 'info', title: 'Iniciando Punto de Acceso Falso...' });
+            try {
+                const res = await fetch(`${API_URL}/security/rogue_ap/start?ssid=${encodeURIComponent(formValues.ssid)}&interface=${formValues.interface}`, { method: 'POST' });
+                const result = await res.json();
+                if (result.success) {
+                    Swal.fire({ icon: 'success', title: 'Evil Twin ONLINE 📡', text: 'Cualquier dispositivo que se conecte será capturado.', background: '#1e293b', color: '#fff' });
+                } else {
+                    Swal.fire({ icon: 'error', title: 'Fallo al iniciar', text: result.error || 'Verifica tu hardware WiFi', background: '#1e293b', color: '#fff' });
+                }
+                updateRogueAPStatus();
+            } catch (e) { console.error(e); }
+        }
+    }
+}
+
+// --- FORENSIC CAPTURES ---
+async function fetchCaptures() {
+    const list = document.getElementById('capture-list');
+    if (!list) return;
+
+    try {
+        const res = await fetch(`${API_URL}/security/captures`);
+        const captures = await res.json();
+
+        if (captures.length === 0) {
+            list.innerHTML = '<p class="text-slate-500 text-sm italic text-center mt-20">No hay capturas disponibles aún.</p>';
+            return;
+        }
+
+        list.innerHTML = captures.map(c => {
+            const sizeMB = (c.size / (1024 * 1024)).toFixed(2);
+            const date = new Date(c.date).toLocaleString();
+            return `
+                <div class="p-4 bg-slate-800/40 rounded-xl border border-white/5 flex justify-between items-center hover:bg-blue-500/5 transition-all">
+                    <div>
+                        <p class="text-sm font-bold text-slate-200 truncate w-64" title="${c.name}">${c.name}</p>
+                        <p class="text-[10px] text-slate-500">${date} • ${sizeMB} MB</p>
+                    </div>
+                    <a href="${API_URL}/security/captures/download/${c.name}" download class="p-2 rounded-lg bg-blue-500/10 text-blue-400 hover:bg-blue-600 hover:text-white transition-all">
+                        <i class="fas fa-file-download mr-1"></i> Wireshark
+                    </a>
+                </div>
+            `;
+        }).join('');
+    } catch (e) { console.error(e); }
+}
+
+window.fetchCaptures = fetchCaptures;
+window.toggleRogueAP = toggleRogueAP;
+window.configureRogueAP = () => toggleRogueAP(); // Alias para el engranaje
+
+// --- SECURITY CENTER LOGIC ---
+async function fetchAuditSummary() {
+    try {
+        const res = await fetch(`${API_URL}/security/audit_summary`);
+        const data = await res.json();
+
+        // Total count
+        const totalEl = document.getElementById('vuln-count-total');
+        if (totalEl) totalEl.innerText = `${data.total_vulnerabilities} Detectadas`;
+
+        // Severity Text
+        const sevEl = document.getElementById('vuln-severity-text');
+        if (sevEl) {
+            const s = data.severity_breakdown;
+            sevEl.innerText = `${s.CRITICAL} Críticas, ${s.HIGH} Altas`;
+        }
+
+        // MITM Check
+        const mitmCard = document.getElementById('security-mitm-card');
+        const mitmText = document.getElementById('mitm-text');
+        const mitmSub = document.getElementById('mitm-subtext');
+
+        if (data.mitm_status === 'secure') {
+            mitmCard.className = "glass-panel p-6 rounded-2xl flex items-center gap-5 border-l-4 border-emerald-500 bg-emerald-500/5";
+            mitmText.innerText = "GATEWAY SEGURO";
+            mitmText.className = "text-lg font-bold text-emerald-400";
+            mitmSub.innerText = "Sin suplantación detectada";
+        } else {
+            mitmCard.className = "glass-panel p-6 rounded-2xl flex items-center gap-5 border-l-4 border-red-500 bg-red-500/10 animate-pulse";
+            mitmText.innerText = "¡ALERTA MITM!";
+            mitmText.className = "text-lg font-bold text-red-500";
+            mitmSub.innerText = "Posible suplantación de identidad";
+        }
+
+    } catch (e) {
+        console.error("Error fetching audit summary", e);
+    }
+}
+
+async function fetchVulnerabilityHistory() {
+    const list = document.getElementById('vulnerability-list');
+    if (!list) return;
+
+    try {
+        const res = await fetch(`${API_URL}/security/vulnerabilities`);
+        const vulns = await res.json();
+
+        if (vulns.length === 0) {
+            list.innerHTML = '<p class="text-slate-500 text-sm italic text-center mt-20">No se han registrado vulnerabilidades.</p>';
+            return;
+        }
+
+        list.innerHTML = vulns.map(v => {
+            const severityColors = {
+                'CRITICAL': 'bg-red-600 text-white',
+                'HIGH': 'bg-orange-600 text-white',
+                'MEDIUM': 'bg-yellow-600 text-black',
+                'LOW': 'bg-blue-600 text-white'
+            };
+            const color = severityColors[v.severity] || 'bg-slate-600';
+            const date = new Date(v.timestamp + (v.timestamp.includes('Z') ? '' : 'Z')).toLocaleString();
+
+            return `
+                <div class="p-3 bg-slate-800/50 rounded-lg border border-white/5 hover:border-white/10 transition-colors">
+                    <div class="flex justify-between items-start mb-2">
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold ${color}">${v.severity}</span>
+                        <span class="text-[10px] text-slate-500 font-mono">${date}</span>
+                    </div>
+                    <h4 class="text-sm font-bold text-slate-200 mb-1">${v.title}</h4>
+                    <p class="text-xs text-slate-400 line-clamp-2" title="${v.description}">${v.description}</p>
+                    <div class="mt-2 text-[10px] text-blue-400 font-mono">
+                        <i class="fas fa-desktop mr-1"></i> MAC: ${v.device_mac}
+                        ${v.port ? `<i class="fas fa-door-open ml-3 mr-1"></i> Puerto: ${v.port}` : ''}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+    } catch (e) {
+        console.error("Error fetching vulns", e);
+    }
+}
+
+async function fetchRecentSecurityAlarms() {
+    const list = document.getElementById('security-alarms-list');
+    if (!list) return;
+
+    try {
+        const res = await fetch(`${API_URL}/events?limit=20`);
+        const events = await res.json();
+
+        // Filtrar solo DANGER y WARNING
+        const alarms = events.filter(e => e.event_type === 'DANGER' || e.event_type === 'WARNING');
+
+        if (alarms.length === 0) {
+            list.innerHTML = '<p class="text-slate-500 text-sm italic text-center mt-20">Todo tranquilo en la red.</p>';
+            return;
+        }
+
+        list.innerHTML = alarms.map(e => {
+            const isDanger = e.event_type === 'DANGER';
+            const color = isDanger ? 'border-red-500 bg-red-500/5' : 'border-yellow-500 bg-yellow-500/5';
+            const icon = isDanger ? 'fa-radiation text-red-500' : 'fa-exclamation-triangle text-yellow-500';
+            const date = new Date(e.timestamp + (e.timestamp.includes('Z') ? '' : 'Z')).toLocaleTimeString();
+
+            return `
+                <div class="p-4 rounded-xl border ${color} flex gap-4 items-start animate-fade-in">
+                    <div class="p-2 rounded-lg bg-white/5">
+                        <i class="fas ${icon} text-lg"></i>
+                    </div>
+                    <div class="flex-1">
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-[10px] font-bold uppercase tracking-widest ${isDanger ? 'text-red-400' : 'text-yellow-400'}">${e.event_type}</span>
+                            <span class="text-[10px] text-slate-500 font-mono">${date}</span>
+                        </div>
+                        <p class="text-sm text-slate-200">${e.message}</p>
+                        ${e.device_mac ? `<p class="text-[10px] text-slate-500 mt-2 font-mono">Origen: ${e.device_mac}</p>` : ''}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+    } catch (e) {
+        console.error("Error fetching alarms", e);
+    }
+}
+
+// Initial fetch logic for intervals
+setInterval(() => {
+    if (currentView === 'security') {
+        fetchAuditSummary();
+        fetchRecentSecurityAlarms();
+    }
+}, 5000);
+
+window.fetchVulnerabilityHistory = fetchVulnerabilityHistory;
+window.fetchAuditSummary = fetchAuditSummary;
+
+// --- UTILS ---
 //     if(currentView === 'dashboard') fetchRecentActivity();
 // }, 2000); // 2s polling
 
