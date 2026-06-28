@@ -6,14 +6,38 @@ import scapy.all as scapy
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 import sys
 
+# Utilidad para respuestas DNS falsas (Captive Portal)
+class DNSQuery:
+    def __init__(self, data):
+        self.data = data
+        self.domain = ''
+        tipo = (data[2] >> 3) & 15
+        if tipo == 0:
+            ini = 12
+            lon = data[ini]
+            while lon != 0:
+                self.domain += data[ini+1:ini+lon+1].decode() + '.'
+                ini += lon + 1
+                lon = data[ini]
+
+    def response(self, ip):
+        packet = b''
+        if self.domain:
+            packet += self.data[:2] + b"\x81\x80"
+            packet += self.data[4:6] + self.data[4:6] + b'\x00\x00\x00\x00'
+            packet += self.data[12:]
+            packet += b'\xc0\x0c'
+            packet += b'\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04'
+            packet += bytes(map(int, ip.split('.')))
+        return packet
+
 # Configuración
-WARNING_HTML_PATH = "templates/warning.html"
+WARNING_HTML_PATH = "/media/Jesus-Aroldo/Anexo/Desarrollos  /Monitor_Wifi/templates/warning.html"
 
 def get_default_iface_name():
     try:
-        # Intenta obtener la interfaz por defecto (la que tiene ruta a internet)
         route = scapy.conf.route.route("8.8.8.8")
-        return route[0] # Interfaz (ej: eno1, wlan0)
+        return route[0]
     except:
         return scapy.conf.iface
 
@@ -21,7 +45,6 @@ def get_local_ip(iface=None):
     try:
         if iface:
              return scapy.get_if_addr(iface)
-        
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
@@ -31,28 +54,27 @@ def get_local_ip(iface=None):
         return "127.0.0.1"
 
 class WarningHandler(SimpleHTTPRequestHandler):
-    REDIRECT_IP = "192.168.0.1" # Default fallback, overwritten by Jailer
+    REDIRECT_IP = "192.168.1.1" # Overwritten by Jailer
 
     def do_GET(self):
-        # PORTAL CAUTIVO STANDARD BEHAVIOR
-        # Android: /generate_204 -> Espera 204. Si recibe otra cosa (200 o 302), lanza popup.
-        # iOS: /hotspot-detect.html -> Espera "Success". Si recibe otra cosa, lanza popup.
-        # Windows: /ncsi.txt -> Espera "Microsoft NCSI".
-        
-        # Estrategia: "Captive Portal Detection"
-        # 1. Si piden nuestra IP root ("/"), mostrar la Alerta.
-        # 2. Si piden CUALQUIER otra cosa, REDIRIGIR (302) a nuestra IP root.
-        
-        # Identificar si la request va dirigida a nuestra IP local
         host = self.headers.get('Host', '')
+        path = self.path
         
-        # Si ya están en nuestra IP y path raiz, mostrar alerta
-        if host.startswith(self.REDIRECT_IP) and (self.path == "/" or self.path.startswith("/static")):
-            self._serve_warning_page()
+        is_probe = any(x in path for x in [
+            'generate_204', 'check_network_status', 'hotspot-detect.html', 
+            'ncsi.txt', 'success.html', 'connectivity-check'
+        ])
+
+        if host.startswith(self.REDIRECT_IP) or host == "127.0.0.1":
+            if path == "/" or path.startswith("/static") or is_probe:
+                self._serve_warning_page()
+            else:
+                self._send_redirect()
             return
-            
-        # Para todo lo demás (Google, Apple, etc), REDIRIGIR A LA ALERTA
-        # Esto confirma al OS que hay un portal cautivo.
+
+        self._send_redirect()
+
+    def _send_redirect(self):
         self.send_response(302)
         self.send_header('Location', f'http://{self.REDIRECT_IP}/')
         self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
@@ -61,39 +83,31 @@ class WarningHandler(SimpleHTTPRequestHandler):
     def _serve_warning_page(self):
         try:
             self.send_response(200)
-            self.send_header('Content-type', 'text/html')
+            self.send_header('Content-type', 'text/html; charset=utf-8')
             self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
+            self.send_header('Connection', 'close')
             self.end_headers()
             
             if os.path.exists(WARNING_HTML_PATH):
                 with open(WARNING_HTML_PATH, 'rb') as f:
                     self.wfile.write(f.read())
             else:
-                self.wfile.write("""
-                    <html>
-                    <body style="background-color:black; color:red; text-align:center; padding-top:50px; font-family:sans-serif;">
-                        <h1 style="font-size:50px;">🚫 ACCESO BLOQUEADO 🚫</h1>
-                        <h2>Tu dispositivo ha sido detectado como INTRUSO.</h2>
-                        <p>Esta red está monitoreada activamente.</p>
-                    </body>
-                    </html>
-                """.encode("utf-8"))
+                self.wfile.write("<h1>NetGuard: Acceso Bloqueado</h1>".encode())
         except Exception as e:
-            print(f"Error sirviendo web: {e}")
+            pass
 
     def log_message(self, format, *args):
-        pass # Silenciar logs
+        pass
 
 class Jailer:
     def __init__(self):
-        self.victims = {} # IP -> MAC (Dict for specific targeting)
+        self.victims = {}
         self.running = False
         self.lock = threading.Lock()
         self.iface = get_default_iface_name()
         self.local_ip = get_local_ip(self.iface)
         self.gateway_ip = self._get_gateway_ip()
-        
-        # Threads
         self.web_thread = None
         self.dns_thread = None
         self.arp_thread = None
@@ -105,39 +119,33 @@ class Jailer:
         except:
             return "192.168.0.1"
 
+    def _get_gateway_mac(self):
+        try:
+            ans, unans = scapy.srp(scapy.Ether(dst="ff:ff:ff:ff:ff:ff")/scapy.ARP(pdst=self.gateway_ip), timeout=2, verbose=False)
+            for s, r in ans:
+                return r.hwsrc
+        except:
+            return "ff:ff:ff:ff:ff:ff"
+
     def _get_active_interfaces(self):
-        """Devuelve una lista de interfaces activas con IP"""
         interfaces = []
         try:
             for iface in scapy.get_if_list():
                 if iface == 'lo': continue
-                # Solo interfaces con IP
                 if scapy.get_if_addr(iface) != "0.0.0.0":
                     interfaces.append(iface)
         except: pass
-        if not interfaces:
-             # Fallback
-             interfaces = [self.iface]
-        return interfaces
+        return interfaces or [self.iface]
 
     def start(self):
         if self.running: return
         self.running = True
-        
         self.interfaces = self._get_active_interfaces()
-        print(f"🚔 Wall of Shame (Jailer) Iniciado en {', '.join(self.interfaces)}")
-        
         os.system("sysctl -w net.ipv4.ip_forward=1 > /dev/null")
-
-        # 1. Web Server
         self.web_thread = threading.Thread(target=self._run_web_server, daemon=True)
         self.web_thread.start()
-
-        # 2. DNS Server
         self.dns_thread = threading.Thread(target=self._run_dns_server, daemon=True)
         self.dns_thread.start()
-
-        # 3. ARP Spoofer
         self.arp_thread = threading.Thread(target=self._run_arp_loop, daemon=True)
         self.arp_thread.start()
 
@@ -146,160 +154,101 @@ class Jailer:
         if self.dnssocket:
             try: self.dnssocket.close()
             except: pass
-            
         with self.lock:
-             # Release all on stop
-             for ip, mac in list(self.victims.items()):
+             for ip in list(self.victims.keys()):
                  self.release_prisoner(ip)
 
     def add_prisoner(self, ip, mac=None):
         with self.lock:
             if ip not in self.victims:
-                print(f"🚔 Encarcelando a {ip} ({mac or 'Unknown MAC'}) - TODAS LAS REDES")
                 self.victims[ip] = mac
-                
-                # PORTAL CAUTIVO AGRESIVO (GLOBAL - SIN INTERFAZ ESPECIFICA):
-                # Aplicamos reglas sin -i {iface} para que afecten a cualquier interfaz de entrada
-                
-                # 1. HTTP a nosotros (REDIRECT)
+                # Reglas de IPTables (Misma agresividad)
                 os.system(f"iptables -t nat -I PREROUTING -s {ip} -p tcp --dport 80 -j REDIRECT --to-ports 80")
-                
-                # 2. DNS a nosotros (REDIRECT)
                 os.system(f"iptables -t nat -I PREROUTING -s {ip} -p udp --dport 53 -j REDIRECT --to-ports 53")
+                os.system(f"iptables -I FORWARD -s {ip} -j REJECT --reject-with icmp-admin-prohibited")
                 
-                # 3. Bloquear HTTPS y TODO el tráfico restante (ICMP, UDP juegos, etc)
-                os.system(f"iptables -I FORWARD -s {ip} -p tcp --dport 443 -j REJECT --reject-with tcp-reset")
-                os.system(f"iptables -I FORWARD -s {ip} -p udp --dport 443 -j REJECT")
-
-                self._send_arp_burst(ip, mac)
+                # BURST ARP MUY AGRESIVO (Aumentado a 20 para forzar el cambio de tabla ARP instantáneo)
+                self._send_arp_burst(ip, mac, count=20)
                 
-                # 🚨 NOTIFICACIÓN DE DISPOSITIVO ENCARCELADO
+                try:
+                    from backend.forensics import evidence_collector
+                    evidence_collector.start_capture(ip, mac)
+                except: pass
                 self._notify_jailed(ip, mac)
-    
+
     def _notify_jailed(self, ip, mac):
-        """Envía notificación cuando un dispositivo es encarcelado"""
         try:
-            # Importar aquí para evitar dependencias circulares
             from backend.notifier import send_desktop_notification
             from backend.database import engine
             from backend.models import Device
             from sqlmodel import Session, select
-            
-            # Obtener información del dispositivo desde la BD
-            device_name = "Dispositivo Desconocido"
-            vendor = "Desconocido"
-            
+            device_name = "Dispositivo"
             if mac:
                 with Session(engine) as session:
-                    statement = select(Device).where(Device.mac == mac)
-                    device = session.exec(statement).first()
-                    if device:
-                        device_name = device.alias or device.vendor or "Dispositivo Desconocido"
-                        vendor = device.vendor or "Desconocido"
-            
-            # Enviar notificación de escritorio
-            title = "🚔 DISPOSITIVO ENCARCELADO"
-            message = f"{device_name}\nIP: {ip}\nMAC: {mac or 'N/A'}\n\n⚠️ Redirigido a página cautiva"
-            
-            send_desktop_notification(
-                title=title,
-                message=message,
-                urgency="critical",
-                icon="security-medium"
-            )
-            
-            print(f"✅ Notificación de Jail enviada para {ip}")
-            
-        except Exception as e:
-            print(f"⚠️ Error enviando notificación de Jail: {e}")
-
+                    d = session.exec(select(Device).where(Device.mac == mac)).first()
+                    if d: device_name = d.alias or d.vendor or "Dispositivo"
+            send_desktop_notification(title="🚔 ENCARCELADO", message=f"{device_name}\nIP: {ip}", urgency="critical")
+        except: pass
 
     def release_prisoner(self, ip):
         with self.lock:
             if ip in self.victims:
-                print(f"🏳️ Liberando a {ip}")
                 del self.victims[ip]
-                
-                # Limpiar (Sin interface especifica)
-                # Nota: El orden de borrado (-D) no importa tanto como -I
                 os.system(f"iptables -t nat -D PREROUTING -s {ip} -p tcp --dport 80 -j REDIRECT --to-ports 80")
                 os.system(f"iptables -t nat -D PREROUTING -s {ip} -p udp --dport 53 -j REDIRECT --to-ports 53")
-                os.system(f"iptables -D FORWARD -s {ip} -p tcp --dport 443 -j REJECT --reject-with tcp-reset")
-                os.system(f"iptables -D FORWARD -s {ip} -p udp --dport 443 -j REJECT")
-                
+                os.system(f"iptables -D FORWARD -s {ip} -j REJECT --reject-with icmp-admin-prohibited")
                 self._restore_arp(ip)
-
-    def _send_arp_burst(self, ip, mac=None):
-        # Enviar burst en TODAS las interfaces activas por si acaso
-        # El switch/AP se encargará de enrutar
-        try:
-            target_mac = mac if mac else "ff:ff:ff:ff:ff:ff"
-            print(f"DEBUG: Enviando ARP Poison a {ip} ({target_mac}) en interfaces: {self.interfaces}")
-            
-            for iface in self.interfaces:
                 try:
-                    # Gateway de esta interfase?
-                    # Simplificacion: Usamos la gateway global detectada o la IP de la interfase como source
-                    # Mejor: Spoofear siendo el Gateway GLOBAL detectado
-                    # Si multicast, llegará.
-                    
-                    pkt1 = scapy.ARP(op=2, pdst=ip, hwdst=target_mac, psrc=self.gateway_ip)
-                    # Tell Gateway I am victim
-                    pkt2 = scapy.ARP(op=2, pdst=self.gateway_ip, hwdst="ff:ff:ff:ff:ff:ff", psrc=ip)
-                    
-                    scapy.send(pkt1, count=3, verbose=False, iface=iface)
-                    scapy.send(pkt2, count=3, verbose=False, iface=iface)
-                except Exception as e:
-                    print(f"DEBUG: Error enviando ARP en {iface}: {e}")
-        except Exception as e:
-            print(f"DEBUG: Error general en ARP burst: {e}")
-    
+                    from backend.forensics import evidence_collector
+                    evidence_collector.stop_capture(ip)
+                except: pass
+
     def _run_web_server(self):
         try:
-            # Bind to 0.0.0.0 to accept traffic from victims
-            server = HTTPServer(('0.0.0.0', 80), WarningHandler)
-            
-            # CRITICAL FIX: Inject real LAN IP into handler for redirects
             WarningHandler.REDIRECT_IP = self.local_ip 
-            
-            print(f"🕸️ Servidor Web Trampa escuchando en puerto 80 (Redirect IP: {self.local_ip})")
+            server = HTTPServer(('0.0.0.0', 80), WarningHandler)
             server.serve_forever()
-        except OSError:
-             print("⚠️ Puerto 80 ocupado. No se puede iniciar servidor web trampa.")
+        except: pass
 
     def _run_dns_server(self):
-        print(f"🕸️ Servidor DNS Trampa ONLINE (:53)")
         try:
             self.dnssocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.dnssocket.bind(('0.0.0.0', 53))
-            
             while self.running:
                 try:
                     data, addr = self.dnssocket.recvfrom(1024)
                     p = DNSQuery(data)
                     self.dnssocket.sendto(p.response(self.local_ip), addr)
-                except:
-                    pass
+                except: pass
         except: pass
 
+    def _send_arp_burst(self, ip, mac=None, count=10):
+        gw_mac = self._get_gateway_mac()
+        target_mac = mac if mac else "ff:ff:ff:ff:ff:ff"
+        for iface in self.interfaces:
+            try:
+                # Decirle a la víctima que YO soy el router
+                pkt1 = scapy.ARP(op=2, pdst=ip, hwdst=target_mac, psrc=self.gateway_ip)
+                # Decirle al router que YO soy la víctima
+                pkt2 = scapy.ARP(op=2, pdst=self.gateway_ip, hwdst=gw_mac, psrc=ip)
+                scapy.send(pkt1, count=count, verbose=False, iface=iface)
+                scapy.send(pkt2, count=count, verbose=False, iface=iface)
+            except: pass
+
     def _run_arp_loop(self):
+        gw_mac = self._get_gateway_mac()
         while self.running:
             with self.lock:
-                targets = dict(self.victims) # Copy dict
-            
-            # Refresh active interfaces dynamically? Maybe heavy. Keep static for now.
-            
+                targets = dict(self.victims)
             for ip, mac in targets.items():
                 for iface in self.interfaces:
                     try:
                         target_mac = mac if mac else "ff:ff:ff:ff:ff:ff"
-                        # Victim -> Attacker -> Gateway
+                        # Enviar ráfaga pequeña continua (0.5s de intervalo total)
                         scapy.send(scapy.ARP(op=2, pdst=ip, hwdst=target_mac, psrc=self.gateway_ip), verbose=False, iface=iface)
-                        # Gateway -> Attacker -> Victim
-                        scapy.send(scapy.ARP(op=2, pdst=self.gateway_ip, hwdst="ff:ff:ff:ff:ff:ff", psrc=ip), verbose=False, iface=iface)
-                    except:
-                        pass
-            time.sleep(2)
+                        scapy.send(scapy.ARP(op=2, pdst=self.gateway_ip, hwdst=gw_mac, psrc=ip), verbose=False, iface=iface)
+                    except: pass
+            time.sleep(0.5) # Más frecuente para "martillar" la tabla ARP
 
     def _restore_arp(self, ip):
         try:
@@ -307,7 +256,6 @@ class Jailer:
              for iface in self.interfaces:
                  packet = scapy.ARP(op=2, pdst=ip, hwdst="ff:ff:ff:ff:ff:ff", psrc=self.gateway_ip, hwsrc=real_mac)
                  scapy.send(packet, count=3, verbose=False, iface=iface)
-        except:
-             pass
+        except: pass
 
 jailer = Jailer()

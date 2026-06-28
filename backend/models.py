@@ -48,3 +48,26 @@ class IntruderLog(SQLModel, table=True):
     vendor: Optional[str] = None
     alias: Optional[str] = None
     detection_type: str # "new_device" o "reconnection"
+
+class Vulnerability(SQLModel, table=True):
+    """Registro de vulnerabilidades encontradas"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    device_mac: str
+    severity: str # LOW, MEDIUM, HIGH, CRITICAL
+    title: str
+    description: str
+    port: Optional[int] = None
+    solution: Optional[str] = None
+
+class Credential(SQLModel, table=True):
+    """Registro de credenciales capturadas (Sniffing)"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    device_mac: Optional[str] = None
+    ip: str
+    protocol: str # HTTP, FTP, etc.
+    hostname: Optional[str] = None
+    username: str
+    password: str
+    context: Optional[str] = None # URL or additional info
